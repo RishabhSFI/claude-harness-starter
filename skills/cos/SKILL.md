@@ -158,6 +158,6 @@ script), prove each step passes, commit it on a task branch, open a PR".
 
 ## Daily brief
 
-The scheduled task "Chief of Staff morning brief" runs on weekdays and
+If the owner set up a scheduled task that runs `/cos` each morning, it
 writes `H/reports/cos-<date>.md`. If the owner asks "what did I miss", read
 the latest one first.

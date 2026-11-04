@@ -52,14 +52,14 @@ Run all your projects from one Claude chat.
 
    It links the `cos` and `until-ready` skills into `~/.claude/skills`, links
    `global/CLAUDE.md` to `~/.claude/CLAUDE.md`, and adds two hooks to
-   `~/.claude/settings.json` (it saves a `.bak` first). It never overwrites a
-   file you already have: if you have your own `~/.claude/CLAUDE.md`, it says
+   `~/.claude/settings.json`. The first time, it saves your settings as they
+   were to `settings.json.before-harness`. It never overwrites a file you
+   already have: if you have your own `~/.claude/CLAUDE.md`, it says
    so and leaves it. Copy the rules from `global/CLAUDE.md` into yours by
    hand.
 
-3. **Your projects.** Copy each project from `projects.example.json` into
-   `projects.json`. Or open a chat in this folder, run `/cos`, and say "add my
-   project at ~/Projects/my-app". For each one, fill in:
+3. **Your projects.** Copy the example from `projects.example.json` into
+   `projects.json`, once per project, and fill in:
    - `checkouts`: the folders it lives in;
    - `aliases`: names you call it, used to file sessions;
    - `keywords`: words that point to it, used to route requests;
@@ -84,6 +84,10 @@ Run all your projects from one Claude chat.
 Open one chat in this folder and run `/cos`. Ask in plain words: "status of
 everything", "tell my-app to add dark mode", "start a new project for X".
 Each worker shows up as its own session in the sidebar.
+
+Optional: install the unslop skills too; the global rules use them for UI
+work when they're there. `digest.py` summarizes recent sessions for a daily
+review of the harness itself (`python3 -I digest.py`).
 
 Optional: a morning brief. Make a scheduled task in the desktop app that runs
 `/cos` on weekdays and saves the brief to `reports/`, read-only.

@@ -11,8 +11,8 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
   website or app and this session has no project folder, make
   `~/Projects/<name>` first (with `git init`) and switch to it before writing
   code. Dev servers and previews don't run in scratch sessions.
-- **Done for UI or wording changes**, in any project: run the unslop skill on
-  the changed screens and a pstack review of the diff, then say what each one
+- **Done for UI or wording changes**, in any project: run the unslop skill (if
+  installed) on the changed screens and a pstack review of the diff, then say what each one
   changed.
 - **Loop until ready.** When the owner asks to build or fix something and
   the project has a gate (`.claude/gate.json`), use `/until-ready`. Don't stop

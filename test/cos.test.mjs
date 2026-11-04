@@ -245,7 +245,10 @@ describe('install.sh', () => {
     assert.match(settings.hooks.Stop[1].hooks[0].command, /gate\/qa-gate\.mjs"$/);
     assert.equal(settings.model, 'x');
     assert.equal(cosHooks(settings).length, 1);
-    assert.deepEqual(JSON.parse(readFileSync(join(home, '.claude/settings.json.bak'), 'utf8')), original);
+    const backup = join(home, '.claude/settings.json.before-harness');
+    assert.deepEqual(JSON.parse(readFileSync(backup, 'utf8')), original);
+    install(home);
+    assert.deepEqual(JSON.parse(readFileSync(backup, 'utf8')), original, 'a second install keeps the first backup');
   });
 
   test('leaves a CLAUDE.md linked somewhere else untouched', () => {

@@ -16,6 +16,11 @@ else
   HARNESS=$HERE
 fi
 CLAUDE_DIR="$HOME/.claude"
+
+# The skills refer to ~/Projects/claude-harness by name.
+if [ "$HARNESS" != "$(cd "$HOME" && pwd -P)/Projects/claude-harness" ]; then
+  printf 'warning: this folder is %s, but the skills expect ~/Projects/claude-harness. Move it there and rerun.\n' "$HARNESS"
+fi
 STATUS=0
 
 say() {
@@ -50,9 +55,11 @@ link "$HARNESS/skills/cos" "$CLAUDE_DIR/skills/cos" refuse
 link "$HARNESS/skills/until-ready" "$CLAUDE_DIR/skills/until-ready" refuse
 link "$HARNESS/global/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" warn
 
-# One backup of settings.json as it was before this run.
-if [ "$DRY" -eq 0 ] && [ -f "$CLAUDE_DIR/settings.json" ]; then
-  cp "$CLAUDE_DIR/settings.json" "$CLAUDE_DIR/settings.json.bak"
+# Keep settings.json as it was before the first install, once. Later runs
+# never overwrite that copy.
+BACKUP="$CLAUDE_DIR/settings.json.before-harness"
+if [ "$DRY" -eq 0 ] && [ -f "$CLAUDE_DIR/settings.json" ] && [ ! -e "$BACKUP" ]; then
+  cp "$CLAUDE_DIR/settings.json" "$BACKUP"
 fi
 
 node - "$HARNESS" "$CLAUDE_DIR/settings.json" "$DRY" <<'EOF' || STATUS=1
