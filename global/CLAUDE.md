@@ -20,6 +20,9 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
 - **Build with pstack.** For anything beyond a one-line change, load the
   pstack:poteto-mode skill and follow its playbook: design first, delegated
   build, independent review before the PR.
+- **Always review.** Nothing merges into a default or live branch without an
+  independent review (a pstack review subagent, or a different model) that
+  didn't write the change. The PR says which reviewer ran and what it found.
 - **Releases.** Merging, pushing and deploying are fine unless the result is
   publicly visible. Public means what the project's CLAUDE.md or the
   `public` entry in `~/Projects/claude-harness/projects.json` lists

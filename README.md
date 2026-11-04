@@ -79,6 +79,26 @@ Run all your projects from one Claude chat.
    `node cos.mjs new <slug> --what "..." --github`, which makes the folder,
    git, a CLAUDE.md and a private GitHub repo under your account.
 
+## Project wiki
+
+A wiki your Claude sessions keep, so facts survive between chats: what was
+decided, who someone is, which tools a project uses. It follows Andrej
+Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+pattern: raw sources you never edit, pages the LLM writes, an index, an
+append-only log, and a schema (`WIKI.md`).
+
+- Start one: `cp -R starter-wiki wiki`, then `node wiki.mjs lint` lists the
+  projects in `projects.json` that still need a page.
+- `node wiki.mjs new-page <id>` makes a project's page from the template.
+- `node wiki.mjs ingest <file> --title "..." --origin "..."` copies a source
+  into `wiki/raw/` (emails, phone numbers and secrets blanked, best effort)
+  and logs it. Never paste secrets into a source anyway.
+- `node wiki.mjs page <id>` and `node wiki.mjs search <words>` find things.
+- Ask Claude "what did we decide about X" and the `wiki` skill answers from
+  it. After work lands, ask it to update the project's page.
+- Your wiki holds notes about real people. Keep your harness repo private;
+  only `starter-wiki/` is meant to be shared.
+
 ## Daily use
 
 Open one chat in this folder and run `/cos`. Ask in plain words: "status of

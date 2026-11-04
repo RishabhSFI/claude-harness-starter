@@ -53,6 +53,7 @@ link() {
 
 link "$HARNESS/skills/cos" "$CLAUDE_DIR/skills/cos" refuse
 link "$HARNESS/skills/until-ready" "$CLAUDE_DIR/skills/until-ready" refuse
+link "$HARNESS/skills/wiki" "$CLAUDE_DIR/skills/wiki" refuse
 link "$HARNESS/global/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" warn
 
 # Keep settings.json as it was before the first install, once. Later runs
