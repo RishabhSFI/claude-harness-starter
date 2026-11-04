@@ -38,6 +38,8 @@ Run all your projects from one Claude chat.
 
    ```bash
    cd ~/Projects/claude-harness
+   git init -b main && git add -A && git commit -m "Start my harness"
+   gh repo create claude-harness --private --source . --push
    sh install.sh --dry-run
    sh install.sh
    ```
