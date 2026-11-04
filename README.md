@@ -33,16 +33,22 @@ Run all your projects from one Claude chat.
    /plugin install pstack@pstack-claude
    ```
 
-2. **This folder.** Put it at `~/Projects/claude-harness`, make it a private
-   GitHub repo of your own, and install:
+2. **This folder.** Clone it to `~/Projects/claude-harness`, make it a
+   private GitHub repo of your own (your projects list will live in it), and
+   install:
 
    ```bash
+   git clone https://github.com/RishabhSFI/claude-harness-starter ~/Projects/claude-harness
    cd ~/Projects/claude-harness
-   git init -b main && git add -A && git commit -m "Start my harness"
+   git remote remove origin
    gh repo create claude-harness --private --source . --push
    sh install.sh --dry-run
    sh install.sh
    ```
+
+   Got it as a zip instead? Unzip it to `~/Projects/claude-harness`, run
+   `git init -b main && git add -A && git commit -m "Start my harness"` in
+   it, then the last three commands.
 
    It links the `cos` and `until-ready` skills into `~/.claude/skills`, links
    `global/CLAUDE.md` to `~/.claude/CLAUDE.md`, and adds two hooks to
