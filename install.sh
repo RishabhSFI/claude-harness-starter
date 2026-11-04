@@ -9,7 +9,12 @@ DRY=0
 # Always the main checkout, even when run from a task worktree, so the links
 # and the hook outlive the worktree.
 HERE=$(cd "$(dirname "$0")" && pwd -P)
-HARNESS=$(cd "$(git -C "$HERE" rev-parse --path-format=absolute --git-common-dir)/.." && pwd -P)
+# Outside git (an unzipped copy) it is just this folder.
+if COMMON=$(git -C "$HERE" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+  HARNESS=$(cd "$COMMON/.." && pwd -P)
+else
+  HARNESS=$HERE
+fi
 CLAUDE_DIR="$HOME/.claude"
 STATUS=0
 
