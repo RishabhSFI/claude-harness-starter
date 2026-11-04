@@ -1,0 +1,17 @@
+{
+  "projects": [
+    {
+      "id": "my-app",
+      "name": "My App",
+      "what": "One line on what it is.",
+      "checkouts": ["~/Projects/my-app"],
+      "aliases": ["my-app", "my app"],
+      "keywords": ["my app", "dashboard", "billing"],
+      "public": {
+        "branches": ["main"],
+        "remotes": [],
+        "notes": ["Vercel production: `vercel deploy --prod`", "the weekly email workflow"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "steps": [
+    { "name": "syntax", "run": "sh -n gate/worktree.sh && sh -n install.sh && python3 -I -m py_compile digest.py" },
+    { "name": "tests", "run": "node --test test/*.test.mjs" },
+    { "name": "status smoke", "run": "node cos.mjs status --no-gh > /dev/null" }
+  ],
+  "rules": [
+    "Don't edit files inside the project repos listed in projects.json. The harness only reads them.",
+    "Don't edit test/ to get through the gate.",
+    "No npm dependencies: Node built-ins and Python standard library only."
+  ],
+  "tries": 5
+}
