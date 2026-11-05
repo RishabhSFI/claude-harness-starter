@@ -113,6 +113,40 @@
       </section>
     </section>
 
+    <section class="view" data-view="system" aria-labelledby="view-title" hidden>
+      <div id="system-kpis" class="kpis four"></div>
+      <section class="panel" aria-labelledby="sys-alerts-h">
+        <div class="panel-head"><h2 id="sys-alerts-h">Status</h2><span id="system-alerts-count" class="count num"></span></div>
+        <ul id="system-alerts" class="rows" aria-live="polite"></ul>
+        <ul id="system-errors" class="note"></ul>
+      </section>
+      <div class="overview-grid">
+        <section class="panel" aria-labelledby="sys-procs-h">
+          <div class="panel-head"><h2 id="sys-procs-h">Processes</h2><span id="system-procs-count" class="count num"></span></div>
+          <ul id="system-suggest" class="rows"></ul>
+          <ul id="system-procs" class="rows"></ul>
+          <div id="system-other-head" class="panel-head sub"><h3 id="sys-other-h">Other apps</h3><span id="system-other-count" class="count num"></span></div>
+          <ul id="system-other" class="rows" aria-labelledby="sys-other-h"></ul>
+          <button id="system-other-more" class="btn ghost more" type="button" hidden></button>
+        </section>
+        <div class="stack">
+          <section class="panel" aria-labelledby="sys-sessions-h">
+            <div class="panel-head"><h2 id="sys-sessions-h">Memory by session</h2></div>
+            <ol id="system-sessions" class="ranked"></ol>
+          </section>
+          <section class="panel" aria-labelledby="sys-machine-h">
+            <div class="panel-head"><h2 id="sys-machine-h">Machine</h2></div>
+            <dl id="system-machine" class="where"></dl>
+          </section>
+          <section class="panel" aria-labelledby="sys-disk-h">
+            <div class="panel-head"><h2 id="sys-disk-h">Disk</h2></div>
+            <ul id="system-disks" class="rows"></ul>
+            <ul id="system-folders" class="rows"></ul>
+          </section>
+        </div>
+      </div>
+    </section>
+
     <section class="view" data-view="settings" aria-labelledby="view-title" hidden>
       <div class="settings-grid">
         <section class="panel" aria-labelledby="limit-h">

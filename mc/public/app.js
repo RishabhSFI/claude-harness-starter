@@ -18,6 +18,7 @@ const ICONS = {
   prs: 'M6 3a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM6 15a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM18 15a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM6 9v6M18 15v-5a3 3 0 0 0-3-3h-4M13 5l-2 2l2 2',
   queue: 'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01',
   usage: 'M5 20V11M12 20V5M19 20v-6M3 20h18',
+  system: 'M4 5h16v11H4zM9 20h6M12 16v4',
   settings: 'M4 6h9m4 0h3M4 12h3m4 0h9M4 18h11m4 0h1M15 4v4M9 10v4M17 16v4',
 };
 const VIEWS = [
@@ -26,6 +27,7 @@ const VIEWS = [
   { id: 'prs', label: 'Pull requests' },
   { id: 'queue', label: 'Queue' },
   { id: 'usage', label: 'Usage' },
+  { id: 'system', label: 'System' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -336,6 +338,7 @@ function needsActions(item) {
     if (item.sessionId) acts.push(btn('Open', () => openSession(item.sessionId)));
     acts.push(btn('Stop', () => stopTask(item.taskId, item.text), 'danger'));
   }
+  if (item.kind === 'system') acts.push(h('a', { class: 'btn', href: '#system' }, 'Open System'));
   if (item.kind === 'review' && item.link) {
     const m = item.link.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
     const href = safeHref(item.link);
@@ -365,7 +368,7 @@ function renderOverview() {
     ...(items.length
       ? items.map((it) => {
           const acts = needsActions(it);
-          const meta = [it.project ? projectName(it.project) : null, it.waiting].filter(Boolean).join(', ');
+          const meta = [it.kind === 'system' ? 'This computer' : it.project ? projectName(it.project) : null, it.waiting].filter(Boolean).join(', ');
           return h('li', {},
             h('div', { class: 'body' },
               h('div', { class: 'title' }, it.kind === 'status' ? plainStatus(it.text, projectName(it.project)) : it.text),
@@ -668,7 +671,112 @@ function renderErrors() {
   else if ($('banner').dataset.tone === 'state') notice(null);
 }
 
-const RENDER = { overview: renderOverview, work: renderWork, prs: renderLanes, queue: renderQueue, usage: renderUsage, settings: renderSettings };
+
+const bytesText = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${Math.round(b / 1024 ** 2)} MB`);
+const uptimeText = (sec) => (sec >= 86400 ? `${Math.floor(sec / 86400)}d ${Math.floor((sec % 86400) / 3600)}h` : `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`);
+const pctText = (n) => `${n >= 10 ? Math.round(n) : n}%`;
+const diskName = (mount) => (mount === '/' || mount === '/System/Volumes/Data' ? 'Main disk' : mount);
+const OTHER_SHOWN = 5;
+let showAllOther = false;
+const KIND_CHIP = { session: ['Claude session', 'accent'], 'dev-server': ['Dev server', 'ok'], gate: ['Test run', 'warn'], 'mission-control': ['Mission control', 'accent'] };
+
+async function stopProcesses(rows, title) {
+  const first = rows[0];
+  const where = [first.ports?.length ? `port ${first.ports.join(', ')}` : null, first.project ? projectName(first.project) : null, first.kind !== 'session' && first.session ? `started by ${first.session}` : null].filter(Boolean).join(', ');
+  const body = rows.length === 1 ? `${first.name} (process ${first.pid}${where ? `, ${where}` : ''}) will be asked to quit. This can't be undone.` : `${rows.map((r) => `${r.name} (${r.pid})`).join(', ')} will be asked to quit. This can't be undone.`;
+  if (!(await confirmAction({ title, body, okLabel: 'Stop', focusCancel: true }))) return;
+  await act('/api/system/stop', { processes: rows.map((r) => ({ pid: r.pid, startedAt: r.startedAt })) });
+}
+
+function processRow(p) {
+  const kind = KIND_CHIP[p.kind];
+  const owned = p.kind !== 'session' && p.session;
+  const age = span(p.startedAt);
+  const meta = [`${pctText(p.cpuPct)} CPU`, `${bytesText(p.memBytes)} memory`, age ? `running ${age}` : null, p.ports?.length ? `port ${p.ports.join(', ')}` : null].filter(Boolean).join(', ');
+  return h('li', {},
+    h('div', { class: 'body' },
+      h('div', { class: 'title' }, p.name, ' ', kind ? chip(kind[0], kind[1]) : null),
+      owned ? h('div', { class: 'meta' }, `Started by ${p.session}`) : null,
+      h('div', { class: 'meta num' }, meta),
+    ),
+    p.stoppable ? h('div', { class: 'acts' }, btn('Stop', () => stopProcesses([p], `Stop ${p.name}?`), 'danger')) : null,
+  );
+}
+
+function volumeRow(d) {
+  const used = d.totalBytes ? Math.round(((d.totalBytes - d.freeBytes) / d.totalBytes) * 100) : 0;
+  return h('li', {},
+    h('div', { class: 'body' },
+      h('div', { class: 'title' }, diskName(d.mount), ' ', d.freePct < 10 ? chip('Low', 'bad') : null),
+      h('div', { class: 'meta num' }, `${bytesText(d.freeBytes)} free of ${bytesText(d.totalBytes)}${d.holds?.length ? `, holds ${d.holds.join(', ')}` : ''}`),
+      h('div', { class: 'bar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(used), 'aria-label': `${used}% of ${diskName(d.mount)} used` }, h('span', { 'data-pct': used })),
+    ),
+  );
+}
+
+function renderSystem() {
+  const sys = state.system;
+  if (!sys) {
+    $('system-kpis').replaceChildren();
+    $('system-alerts').replaceChildren(h('li', { class: 'empty' }, 'System details are only collected when mission control starts from the command line.'));
+    for (const id of ['system-suggest', 'system-procs', 'system-other', 'system-sessions', 'system-disks', 'system-folders', 'system-errors']) $(id).replaceChildren();
+    $('system-machine').replaceChildren();
+    $('system-other-head').hidden = $('system-other-more').hidden = true;
+    return;
+  }
+  const { cpu, memory: mem, machine } = sys;
+  const home = sys.disks.find((d) => d.holds?.includes('harness')) ?? sys.disks[0];
+  const kpis = [
+    kpiCard({ label: 'CPU', value: cpu.pct === null ? '...' : `${Math.round(cpu.pct)}%`, sub: plural(machine.cores, 'core'), series: cpu.history.map((x) => x.pct) }),
+    kpiCard({ label: 'Memory', value: mem.pct === null ? '...' : `${Math.round(mem.pct)}%`, sub: `${bytesText(mem.usedBytes ?? 0)} of ${bytesText(mem.totalBytes)}, ${bytesText(mem.swapUsedBytes)} swap`, series: mem.history.map((x) => x.pct) }),
+    kpiCard({ label: 'Disk free', value: home ? bytesText(home.freeBytes) : '...', sub: home ? `${Math.round(home.freePct)}% of ${bytesText(home.totalBytes)}` : 'No reading yet' }),
+  ];
+  if (cpu.load) kpis.push(kpiCard({ label: 'Load', value: cpu.load[0].toFixed(2), sub: `5 min ${cpu.load[1].toFixed(2)}, 15 min ${cpu.load[2].toFixed(2)}` }));
+  $('system-kpis').className = `kpis ${kpis.length === 4 ? 'four' : 'three'}`;
+  $('system-kpis').replaceChildren(...kpis);
+
+  $('system-alerts-count').textContent = sys.alerts.length ? String(sys.alerts.length) : '';
+  $('system-alerts').replaceChildren(...(sys.alerts.length ? sys.alerts.map((a) => h('li', {}, h('div', { class: 'body' }, h('div', { class: 'title' }, a.text)))) : [h('li', { class: 'empty' }, 'Nothing is overloaded.')]));
+
+  $('system-machine').replaceChildren(
+    ...[['System', `${machine.os} ${machine.version}`.trim()], ['Processor', `${machine.cpuModel}, ${plural(machine.cores, 'core')}`], ['Memory', bytesText(machine.totalBytes)], ['Up for', machine.uptimeSec ? uptimeText(machine.uptimeSec) : 'unknown']].flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)]),
+  );
+
+  const byPid = new Map(sys.processes.map((p) => [p.pid, p]));
+  $('system-suggest').replaceChildren(
+    ...sys.suggestions.map((sg) => {
+      const rows = sg.pids.map((pid) => byPid.get(pid)).filter(Boolean);
+      return h('li', {}, h('div', { class: 'body' }, h('div', { class: 'title' }, sg.text)), rows.length ? h('div', { class: 'acts' }, btn('Stop', () => stopProcesses(rows, sg.text), 'danger')) : null);
+    }),
+  );
+  // Rows with Stop buttons keep their place between refreshes, so a click lands on the row it was aimed at.
+  const kinds = Object.keys(KIND_CHIP);
+  const ours = sys.processes.filter((p) => KIND_CHIP[p.kind]).sort((a, b) => kinds.indexOf(a.kind) - kinds.indexOf(b.kind) || a.pid - b.pid);
+  const other = sys.processes.filter((p) => !KIND_CHIP[p.kind]);
+  $('system-procs-count').textContent = String(ours.length);
+  $('system-procs').replaceChildren(...(ours.length ? ours.map(processRow) : [h('li', { class: 'empty' }, sys.processes.length ? 'No sessions, dev servers or test runs are running.' : 'Waiting for the first reading.')]));
+  $('system-other-head').hidden = !other.length;
+  $('system-other-count').textContent = String(other.length);
+  $('system-other').replaceChildren(...(showAllOther ? other : other.slice(0, OTHER_SHOWN)).map(processRow));
+  const more = $('system-other-more');
+  more.hidden = other.length <= OTHER_SHOWN;
+  more.textContent = showAllOther ? 'Show fewer' : `Show ${other.length - OTHER_SHOWN} more`;
+  more.onclick = () => { showAllOther = !showAllOther; renderSystem(); };
+
+  const biggest = Math.max(1, ...sys.sessions.map((t) => t.memBytes));
+  $('system-sessions').replaceChildren(
+    ...(sys.sessions.length
+      ? sys.sessions.map((t) => h('li', {}, h('div', { class: 'who' }, t.name, h('span', { class: 'proj' }, plural(t.processes, 'process', 'processes'))), h('div', { class: 'amt' }, `${bytesText(t.memBytes)}, ${pctText(t.cpuPct)} CPU`), h('div', { class: 'bar' }, h('span', { 'data-pct': Math.round((t.memBytes / biggest) * 100) }))))
+      : [h('li', { class: 'empty' }, 'No session processes found.')]),
+  );
+  $('system-disks').replaceChildren(...sys.disks.map(volumeRow));
+  const folders = sys.folders.filter((f) => f.bytes !== 0).sort((a, b) => (b.bytes ?? Infinity) - (a.bytes ?? Infinity));
+  $('system-folders').replaceChildren(...(sys.folders.length ? folders.map((f) => h('li', {}, h('div', { class: 'body' }, h('div', { class: 'title' }, f.label), h('div', { class: 'meta num' }, f.bytes === null ? 'Too large to size' : bytesText(f.bytes))))) : [h('li', { class: 'empty' }, 'Folder sizes are measured in the background.')]));
+  $('system-errors').replaceChildren(...sys.errors.map((e) => h('li', {}, e)));
+  applyBars(document.querySelector('section[data-view="system"]'));
+}
+
+const RENDER = { overview: renderOverview, work: renderWork, prs: renderLanes, queue: renderQueue, usage: renderUsage, system: renderSystem, settings: renderSettings };
 
 function renderNav() {
   const needs = state?.needsYou.length ?? 0;
@@ -677,9 +785,10 @@ function renderNav() {
     if (id === view) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
     const badge = a.querySelector('.badge');
-    if (id === 'overview') {
-      badge.hidden = !needs;
-      badge.textContent = String(needs);
+    const count = id === 'overview' ? needs : id === 'system' ? state?.system?.alerts.length ?? 0 : 0;
+    if (badge) {
+      badge.hidden = !count;
+      badge.textContent = String(count);
     }
   }
 }
@@ -711,7 +820,7 @@ function buildNav() {
   $('nav').replaceChildren(
     ...VIEWS.map((v) =>
       h('li', {},
-        h('a', { href: `#${v.id}`, 'data-view': v.id, 'aria-label': v.label }, icon(v.id), h('span', { class: 'label', 'aria-hidden': 'true' }, v.label), v.id === 'overview' ? h('span', { class: 'badge', hidden: true }) : null),
+        h('a', { href: `#${v.id}`, 'data-view': v.id, 'aria-label': v.label }, icon(v.id), h('span', { class: 'label', 'aria-hidden': 'true' }, v.label), ['overview', 'system'].includes(v.id) ? h('span', { class: 'badge', hidden: true }) : null),
       ),
     ),
   );

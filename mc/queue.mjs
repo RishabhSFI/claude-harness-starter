@@ -199,6 +199,14 @@ export function prsFromStatus(status) {
   );
 }
 
+/** PRs merged on GitHub (cos status lists local yesterday and today), one per URL, with their project. */
+export function mergedFromStatus(status) {
+  const seen = new Set();
+  return (status?.projects ?? []).flatMap((p) =>
+    p.checkouts.flatMap((c) => (c.merged ?? []).filter((pr) => !seen.has(pr.url) && seen.add(pr.url)).map((pr) => ({ ...pr, project: p.id, projectName: p.name }))),
+  );
+}
+
 const ageOf = (t, now) => now.getTime() - Date.parse(t.startedAt ?? t.updatedAt);
 /** Time since the task last moved into its current state. A start can take minutes, so `startedAt` would count that too. */
 const timeInState = (t, now) => {

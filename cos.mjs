@@ -22,7 +22,7 @@ const IGNORE_LINES = ['.claude/loop/', '.env', '.env.*', '!.env.example', 'node_
 export { USER_FILES };
 
 const DEFAULT_ROOT = '~/Projects';
-const VALUE_FLAGS = new Set(['registry', 'harness', 'what', 'root', 'owner', 'fake-prs', 'id', 'name', 'keywords', 'to', 'message', 'from', 'mark', 'paused-at', 'projects-dir', 'desktop-dir', 'marks-file', 'now']);
+const VALUE_FLAGS = new Set(['registry', 'harness', 'what', 'root', 'owner', 'fake-prs', 'fake-merged', 'id', 'name', 'keywords', 'to', 'message', 'from', 'mark', 'paused-at', 'projects-dir', 'desktop-dir', 'marks-file', 'now']);
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 const CLAUDE_MD = (name, what) => `# ${name}
@@ -193,6 +193,34 @@ function listPullRequests(cwd, repo, fakePrsFile) {
   }
 }
 
+const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** PRs merged since the start of local yesterday, so a caller can pick out local today in any time zone. Kept apart from open PRs. */
+function listMergedPullRequests(cwd, repo, { fakePrs, fakeMerged }) {
+  const since = new Date();
+  since.setDate(since.getDate() - 1);
+  const fields = 'number,title,url,mergedAt,headRefName,baseRefName';
+  const r = fakeMerged
+    ? { ok: true, out: readFileSync(fakeMerged, 'utf8') }
+    : fakePrs
+      ? { ok: true, out: '[]' }
+      : run(GH, ['pr', 'list', '-R', repo, '--state', 'merged', '--search', `merged:>=${localDate(since)}`, '--json', fields, '--limit', '100'], cwd, GH_TIMEOUT_MS);
+  if (!r.ok) return { merged: [], note: `gh pr list --state merged failed: ${r.err.split('\n')[0] || 'unknown error'}` };
+  try {
+    const merged = JSON.parse(r.out).map((pr) => ({
+      number: pr.number,
+      title: pr.title,
+      branch: pr.headRefName,
+      base: pr.baseRefName ?? null,
+      url: pr.url,
+      mergedAt: pr.mergedAt,
+    }));
+    return { merged, note: null };
+  } catch {
+    return { merged: [], note: 'gh pr list --state merged returned unparseable output' };
+  }
+}
+
 /** First matching rule wins; no match means mergeable-by-cos. Every unknown fails closed. */
 const PR_RULES = [
   { to: 'review', when: (pr) => !pr.base },
@@ -224,7 +252,7 @@ function canonical(p) {
   }
 }
 
-function collectCheckout(path, { useGh, fakePrs }) {
+function collectCheckout(path, { useGh, fakePrs, fakeMerged }) {
   /** @type {Record<string, any>} */
   const s = {
     path,
@@ -241,6 +269,7 @@ function collectCheckout(path, { useGh, fakePrs }) {
     activeGates: 0,
     githubRemote: false,
     prs: [],
+    merged: [],
     notes: [],
   };
   if (!s.exists) return s;
@@ -281,6 +310,9 @@ function collectCheckout(path, { useGh, fakePrs }) {
     const { prs, note } = listPullRequests(path, repo, fakePrs);
     s.prs = prs;
     if (note) s.notes.push(note);
+    const done = listMergedPullRequests(path, repo, { fakePrs, fakeMerged });
+    s.merged = done.merged;
+    if (done.note) s.notes.push(done.note);
   } else if (useGh && origin.ok) {
     s.notes.push(`origin (${origin.out}) is not a parseable GitHub URL; skipped PRs`);
   }
@@ -452,7 +484,7 @@ function cmdStatus(projects, flags, _positional, registryFile) {
     console.log(NO_PROJECTS);
     return;
   }
-  const report = gatherStatus(projects, { useGh: !flags['no-gh'], fakePrs: flags['fake-prs'] });
+  const report = gatherStatus(projects, { useGh: !flags['no-gh'], fakePrs: flags['fake-prs'], fakeMerged: flags['fake-merged'] });
   attachSecretsToStatus(report, projects, { online: !flags['no-gh'], gh: GH, cacheFile: secretsCacheFor(registryFile) });
   console.log(flags.json ? JSON.stringify({ projects: report }, null, 2) : renderStatus(report));
 }

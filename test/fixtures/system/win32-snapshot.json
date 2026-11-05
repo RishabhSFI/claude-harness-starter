@@ -1,0 +1,174 @@
+{
+ "os": [
+  {
+   "Caption": "Microsoft Windows 11 Pro",
+   "Version": "10.0.26100",
+   "TotalVisibleMemorySize": 16777216,
+   "FreePhysicalMemory": 2097152,
+   "LastBootUpTime": "/Date(1793418000000)/"
+  }
+ ],
+ "pagefile": [
+  {
+   "CurrentUsage": 3072,
+   "AllocatedBaseSize": 8192
+  }
+ ],
+ "disks": [
+  {
+   "DeviceID": "C:",
+   "Size": 512110190592,
+   "FreeSpace": 40000000000
+  },
+  {
+   "DeviceID": "D:",
+   "Size": 1000204886016,
+   "FreeSpace": 600000000000
+  }
+ ],
+ "procs": [
+  {
+   "ProcessId": 0,
+   "ParentProcessId": 0,
+   "Name": "System Idle Process",
+   "CommandLine": null,
+   "CreationDate": "/Date(1793418000000)/",
+   "WorkingSetSize": 8192,
+   "UserModeTime": 0,
+   "KernelModeTime": 9999999999,
+   "SessionId": 0
+  },
+  {
+   "ProcessId": 4,
+   "ParentProcessId": 0,
+   "Name": "System",
+   "CommandLine": null,
+   "CreationDate": "/Date(1793418000000)/",
+   "WorkingSetSize": 147456,
+   "UserModeTime": 0,
+   "KernelModeTime": 5000000,
+   "SessionId": 0
+  },
+  {
+   "ProcessId": 612,
+   "ParentProcessId": 4,
+   "Name": "services.exe",
+   "CommandLine": null,
+   "CreationDate": "/Date(1793418000000)/",
+   "WorkingSetSize": 9000000,
+   "UserModeTime": 10000,
+   "KernelModeTime": 20000,
+   "SessionId": 0
+  },
+  {
+   "ProcessId": 5400,
+   "ParentProcessId": 5000,
+   "Name": "explorer.exe",
+   "CommandLine": "C:\\Windows\\Explorer.EXE --flag=FIXTURE-ARG-EXPLORER",
+   "CreationDate": "/Date(1793677200000)/",
+   "WorkingSetSize": 120000000,
+   "UserModeTime": 5000000,
+   "KernelModeTime": 3000000,
+   "SessionId": 1
+  },
+  {
+   "ProcessId": 7000,
+   "ParentProcessId": 5400,
+   "Name": "claude.exe",
+   "CommandLine": "C:\\Users\\owner\\AppData\\Local\\claude\\claude.exe --flag=FIXTURE-ARG-CLAUDE",
+   "CreationDate": "/Date(1793846400000)/",
+   "WorkingSetSize": 300000000,
+   "UserModeTime": 90000000,
+   "KernelModeTime": 10000000,
+   "SessionId": 1
+  },
+  {
+   "ProcessId": 7100,
+   "ParentProcessId": 7000,
+   "Name": "node.exe",
+   "CommandLine": "node C:\\Users\\owner\\Projects\\alpha\\node_modules\\next\\dist\\bin\\next dev -p 3000 --flag=FIXTURE-ARG-NEXT",
+   "CreationDate": "/Date(1793590800000)/",
+   "WorkingSetSize": 450000000,
+   "UserModeTime": 40000000,
+   "KernelModeTime": 8000000,
+   "SessionId": 1
+  },
+  {
+   "ProcessId": 7200,
+   "ParentProcessId": 7000,
+   "Name": "node.exe",
+   "CommandLine": "node --test C:/users/owner/Projects/alpha-tasks/mc-ab12cd/test/a.test.mjs --flag=FIXTURE-ARG-GATE",
+   "CreationDate": "/Date(1793849100000)/",
+   "WorkingSetSize": 200000000,
+   "UserModeTime": 60000000,
+   "KernelModeTime": 6000000,
+   "SessionId": 1
+  },
+  {
+   "ProcessId": 7300,
+   "ParentProcessId": 5400,
+   "Name": "node.exe",
+   "CommandLine": "node C:\\Users\\owner\\Projects\\claude-harness\\mc\\server.mjs --flag=FIXTURE-ARG-MC",
+   "CreationDate": "/Date(1793849400000)/",
+   "WorkingSetSize": 70000000,
+   "UserModeTime": 2000000,
+   "KernelModeTime": 1000000,
+   "SessionId": 1
+  },
+  {
+   "ProcessId": 7400,
+   "ParentProcessId": 5400,
+   "Name": "node.exe",
+   "CommandLine": "node C:\\Users\\other\\Elsewhere\\server.js --flag=FIXTURE-ARG-ELSE",
+   "CreationDate": "/Date(1793763600000)/",
+   "WorkingSetSize": 50000000,
+   "UserModeTime": 1000000,
+   "KernelModeTime": 500000,
+   "SessionId": 1
+  },
+  {
+   "ProcessId": 7500,
+   "ParentProcessId": 612,
+   "Name": "python.exe",
+   "CommandLine": "python C:\\Users\\owner\\Projects\\alpha\\serve.py --flag=FIXTURE-ARG-SVC",
+   "CreationDate": "/Date(1793763600000)/",
+   "WorkingSetSize": 30000000,
+   "UserModeTime": 1000000,
+   "KernelModeTime": 500000,
+   "SessionId": 0
+  },
+  {
+   "ProcessId": 7600,
+   "ParentProcessId": 5400,
+   "Name": "msedge.exe",
+   "CommandLine": "msedge --flag=FIXTURE-ARG-EDGE",
+   "CreationDate": "/Date(1793842800000)/",
+   "WorkingSetSize": 800000000,
+   "UserModeTime": 70000000,
+   "KernelModeTime": 9000000,
+   "SessionId": 1
+  }
+ ],
+ "ports": [
+  {
+   "LocalPort": 3000,
+   "OwningProcess": 7100
+  },
+  {
+   "LocalPort": 3000,
+   "OwningProcess": 7100
+  },
+  {
+   "LocalPort": 4757,
+   "OwningProcess": 7300
+  },
+  {
+   "LocalPort": 8080,
+   "OwningProcess": 7400
+  },
+  {
+   "LocalPort": 135,
+   "OwningProcess": 612
+  }
+ ]
+}

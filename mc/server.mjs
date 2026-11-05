@@ -11,6 +11,7 @@ import * as actions from './actions.mjs';
 import { createActivityReader, DEFAULT_PROJECTS_DIR } from './activity.mjs';
 import * as q from './queue.mjs';
 import { buildSnapshot, prRef, readSweep } from './snapshot.mjs';
+import { canStop, createSystemSampler, folderTargets, REFUSALS } from './system.mjs';
 import { createUsageTracker } from './usage.mjs';
 
 const MC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -130,7 +131,7 @@ const SESSION_ID = /^[0-9a-f][0-9a-f-]{5,63}$/i;
 const TASK_ID = /^[0-9a-f]{6}$/;
 
 /**
- * @param {{port: number, registryFile?: string, stateDir?: string, tokenFile?: string, projectsDir?: string, claudeBin?: string | null, ghBin?: string, intervals?: Partial<typeof DEFAULT_INTERVALS>, log?: (line: string) => void}} opts
+ * @param {{port: number, registryFile?: string, stateDir?: string, tokenFile?: string, projectsDir?: string, claudeBin?: string | null, ghBin?: string, intervals?: Partial<typeof DEFAULT_INTERVALS>, system?: ReturnType<typeof createSystemSampler> | null, kill?: (pid: number, signal: string) => void, log?: (line: string) => void}} opts
  */
 export function createMissionControl(opts) {
   const port = opts.port;
@@ -150,6 +151,8 @@ export function createMissionControl(opts) {
   const projectsDir = opts.projectsDir ?? DEFAULT_PROJECTS_DIR;
   const reader = createActivityReader({ projectsDir });
   const usage = createUsageTracker({ projectsDir });
+  const system = opts.system ?? null;
+  const kill = opts.kill ?? process.kill;
   const s = {
     tasks: q.loadQueue(files.queue),
     settings: q.loadSettings(files.settings),
@@ -173,6 +176,19 @@ export function createMissionControl(opts) {
   const tilde = (p) => (p.startsWith(homedir()) ? `~${p.slice(homedir().length)}` : p);
   const paths = { token: tilde(tokenFile), state: tilde(stateDir), log: tilde(ctx.logFile), transcripts: tilde(projectsDir) };
   const clients = new Set();
+  const systemRoots = [...roots, ...[realpathSync(HARNESS_DIR), `${realpathSync(HARNESS_DIR)}-tasks`].map((root) => ({ id: 'harness', root }))];
+  const systemEnv = {
+    sessions: () => knownSessions(),
+    active: () => clients.size > 0,
+    roots: systemRoots,
+    diskTargets: [
+      { label: 'harness', path: HARNESS_DIR },
+      { label: 'projects', path: dirname(projects[0]?.checkouts[0] ?? HARNESS_DIR) },
+      { label: '~/.claude', path: join(homedir(), '.claude') },
+    ],
+    folderTargets: folderTargets({ projects, transcriptsDir: projectsDir, harnessDir: HARNESS_DIR, exists: existsSync }),
+    onUpdate: () => !s.closed && publish(),
+  };
   let lastBody = '';
   const timers = [];
 
@@ -183,6 +199,28 @@ export function createMissionControl(opts) {
     s.tasks = s.tasks.map((t) => (t.id === task.id ? task : t));
     saveTasks();
   };
+
+  /** Checks one process against a fresh probe, signals it if the guard allows, and logs the attempt either way. */
+  function stopOne(fresh, pid, startedAt) {
+    const proc = fresh.procs.find((p) => p.pid === pid);
+    const verdict = canStop(proc, { ...fresh.ctx, startedAt });
+    const project = proc ? q.projectOfPath(systemRoots, proc.cwd) ?? proc.cmdProject ?? null : null;
+    const fields = { pid, name: proc?.name ?? null, kind: proc?.kind ?? null, project };
+    const name = proc ? `${proc.name} (${pid})` : `Process ${pid}`;
+    if (!verdict.ok) {
+      actions.logAction(ctx, 'system-stop', { ...fields, ok: false, reason: verdict.reason });
+      return { ok: false, name, status: 409, message: REFUSALS[verdict.reason] };
+    }
+    let reason = null;
+    try {
+      kill(pid, 'SIGTERM');
+    } catch (e) {
+      reason = e.code === 'ESRCH' ? 'gone' : 'kill-failed';
+    }
+    actions.logAction(ctx, 'system-stop', { ...fields, ok: !reason, reason });
+    if (reason) return { ok: false, name, status: reason === 'gone' ? 409 : 502, message: reason === 'gone' ? REFUSALS.gone : "Couldn't stop that process." };
+    return { ok: true, name: proc.name };
+  }
 
   /** Task worktrees still on disk whose task has finished (or left the queue). Removing them is the owner's call. */
   function leftover() {
@@ -203,6 +241,7 @@ export function createMissionControl(opts) {
       limitPauses: s.limitPauses,
       activity: s.activity,
       usage: s.usage,
+      system: system?.snapshot() ?? null,
       meta: { errors: s.errors, statusAt: s.at.status, sweepAt: s.at.sweep, claudeFound: Boolean(ctx.claudeBin), paths, leftover: leftover() },
     });
   }
@@ -527,6 +566,23 @@ export function createMissionControl(opts) {
       },
     },
     {
+      path: /^\/api\/system\/stop$/,
+      /** Body: `{pid, startedAt}`, or `{processes: [{pid, startedAt}, ...]}` to stop several on one fresh probe. */
+      run: async (body) => {
+        if (!system) throw new HttpError(404, "The System page isn't available.");
+        const asked = Array.isArray(body.processes) ? body.processes : [body];
+        if (!asked.length || !asked.every((a) => Number.isInteger(a?.pid) && Number.isFinite(a?.startedAt))) throw new HttpError(400, 'Need a process id and its start time.');
+        const fresh = await system.probeNow();
+        if (!fresh) throw new HttpError(503, "Can't read the process list right now. Try again in a moment.");
+        const results = asked.map(({ pid, startedAt }) => stopOne(fresh, pid, startedAt));
+        const stopped = results.filter((r) => r.ok);
+        if (stopped.length) system.wake();
+        const failed = results.filter((r) => !r.ok);
+        if (!stopped.length) throw new HttpError(failed[0].status, failed.length === 1 ? failed[0].message : failed.map((f) => `${f.name}: ${f.message}`).join(' '));
+        return { ok: true, message: [`Asked ${stopped.map((r) => r.name).join(', ')} to stop.`, ...failed.map((f) => `${f.name}: ${f.message}`)].join(' ') };
+      },
+    },
+    {
       path: /^\/api\/refresh$/,
       run: () => {
         refreshStatus();
@@ -561,6 +617,7 @@ export function createMissionControl(opts) {
       writeEvent(res, 'ping', JSON.stringify({ sessionsAt: s.at.sessions, statusAt: s.at.status }));
       clients.add(res);
       req.on('close', () => clients.delete(res));
+      system?.wake();
       return;
     }
 
@@ -616,6 +673,7 @@ export function createMissionControl(opts) {
           refreshSessions();
           refreshStatus();
           refreshUsage();
+          system?.start(systemEnv);
           timers.push(setInterval(refreshSessions, intervals.sessionsMs));
           timers.push(setInterval(refreshUsage, intervals.usageMs));
           timers.push(setInterval(refreshStatus, intervals.statusMs));
@@ -629,7 +687,7 @@ export function createMissionControl(opts) {
     async close() {
       s.closed = true;
       for (const t of timers) clearInterval(t);
-      await Promise.all([s.launching, usage.stop()]);
+      await Promise.all([s.launching, s.statusRun, s.sessionsRun, usage.stop(), system?.stop()]);
       for (const res of clients) res.end();
       clients.clear();
       await new Promise((done) => server.close(() => done()));
@@ -666,6 +724,7 @@ export async function main(argv = process.argv.slice(2)) {
     tokenFile: process.env.MC_TOKEN_FILE || undefined,
     claudeBin: actions.findClaude(),
     ghBin: findGh(),
+    system: createSystemSampler({ exec: actions.exec }),
     log: (line) => console.error(line),
   });
   try {

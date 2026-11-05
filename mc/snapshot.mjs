@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { clean } from './activity.mjs';
-import { prsFromStatus, projectOfPath, queueOrder, sameSession } from './queue.mjs';
+import { mergedFromStatus, prsFromStatus, projectOfPath, queueOrder, sameSession } from './queue.mjs';
 
 export const LANES = [
   { id: 'working', label: 'Working' },
@@ -59,9 +59,15 @@ function prCard(pr, lane, task) {
   };
 }
 
-export function buildLanes(tasks, prs, now = new Date()) {
+/**
+ * `merged` is PRs merged on GitHub; those merged on the local day of `now` join Merged today unless a task already shows them,
+ * by URL or, for a task that never saw its PR open, by project and branch.
+ */
+export function buildLanes(tasks, prs, now = new Date(), merged = []) {
   const cards = [];
   const claimed = new Set();
+  const branchKey = (x) => `${x.project}\0${x.branch}`;
+  const taskBranches = new Set();
   for (const t of tasks) {
     const lane = TASK_LANE[t.state];
     if (!lane || (lane === 'merged_today' && !sameDay(t.updatedAt, now))) continue;
@@ -71,12 +77,19 @@ export function buildLanes(tasks, prs, now = new Date()) {
       cards.push(prCard(pr, lane, t));
     } else {
       cards.push({ key: `task:${t.id}`, lane, project: t.project, title: t.title, taskId: t.id, pr: t.pr ? { ...t.pr, repo: prRef(t.pr.url)?.repo ?? null } : null, checks: null });
+      taskBranches.add(branchKey(t));
     }
   }
   for (const pr of prs) {
     if (claimed.has(pr.url)) continue;
     claimed.add(pr.url);
     cards.push(prCard(pr, PR_LANE.find((r) => r.when(pr)).lane, null));
+  }
+  for (const t of tasks) if (t.pr?.url) claimed.add(t.pr.url);
+  for (const pr of merged) {
+    if (claimed.has(pr.url) || taskBranches.has(branchKey(pr)) || !sameDay(pr.mergedAt, now)) continue;
+    claimed.add(pr.url);
+    cards.push({ ...prCard(pr, 'merged_today', null), checks: null });
   }
   return LANES.map((l) => ({ ...l, cards: cards.filter((c) => c.lane === l.id) }));
 }
@@ -102,10 +115,10 @@ export function groupSessions(sessions, projects, roots, tasks) {
 }
 
 /**
- * Needs-you rows, most urgent kinds first: pause notices, approvals, blocked queue tasks, PRs for the owner, status warnings.
+ * Needs-you rows, most urgent kinds first: pause notices, approvals, blocked queue tasks, PRs for the owner, status warnings, computer alerts.
  * Sessions the queue didn't start show only in the Sessions panel, and the daily review's proposals in their own section.
  */
-export function buildNeedsYou({ status, prs, tasks, settings, waiting, limitPauses = [], now = new Date() }) {
+export function buildNeedsYou({ status, prs, tasks, settings, waiting, limitPauses = [], systemAlerts = [], now = new Date() }) {
   const items = [];
   if (settings.paused && settings.pauseReason) {
     const until = settings.pausedUntil ? ` Resumes by itself at ${clock(settings.pausedUntil)}.` : '';
@@ -135,6 +148,7 @@ export function buildNeedsYou({ status, prs, tasks, settings, waiting, limitPaus
       for (const a of c.attention ?? []) items.push({ kind: 'status', project: p.id, text: `${p.name}: ${a.message}`, path: c.path });
     }
   }
+  for (const a of systemAlerts) items.push({ kind: 'system', text: a.text });
   return items.map((x) => ({ ...x, waiting: x.taskId ? waiting[x.taskId] ?? null : null }));
 }
 
@@ -235,16 +249,16 @@ export function buildKpis({ work, lanes, queueLength, usage }) {
   };
 }
 
-export function buildSnapshot({ projects, roots, status, sessions, tasks, settings, waiting, sweep, limitPauses = [], meta, activity = new Map(), usage = EMPTY_USAGE, now = new Date() }) {
+export function buildSnapshot({ projects, roots, status, sessions, tasks, settings, waiting, sweep, limitPauses = [], meta, activity = new Map(), usage = EMPTY_USAGE, system = null, now = new Date() }) {
   const prs = prsFromStatus(status);
   const working = tasks.filter((t) => t.state === 'starting' || t.state === 'working').length;
-  const lanes = buildLanes(tasks, prs, now);
+  const lanes = buildLanes(tasks, prs, now, mergedFromStatus(status));
   const queued = queueOrder(tasks);
   const work = buildWork({ sessions, projects, roots, tasks, prs, activity });
   return {
     meta: { ...meta, cap: settings.cap, paused: settings.paused, pauseReason: settings.pauseReason, pausedUntil: settings.pausedUntil ?? null, working },
     projects: projects.map((p) => ({ id: p.id, name: p.name })),
-    needsYou: buildNeedsYou({ status, prs, tasks, settings, waiting, limitPauses, now }),
+    needsYou: buildNeedsYou({ status, prs, tasks, settings, waiting, limitPauses, systemAlerts: system?.alerts ?? [], now }),
     limitPauses: limitPauses.map(({ sessionId, cwd, title, pausedAt, resetsAt, due, handled }) => ({ sessionId, cwd, title, pausedAt, resetsAt, due, handled })),
     sessions: groupSessions(sessions, projects, roots, tasks),
     lanes,
@@ -257,5 +271,6 @@ export function buildSnapshot({ projects, roots, status, sessions, tasks, settin
     feed: buildFeed(work, activity),
     kpis: buildKpis({ work, lanes, queueLength: queued.length, usage }),
     usage,
+    system,
   };
 }

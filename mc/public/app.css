@@ -127,12 +127,20 @@ code { font: var(--t12) var(--mono); color: var(--muted); }
 }
 .panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); min-height: 32px; margin-bottom: var(--s3); }
 .panel-head .count { color: var(--muted); font-size: var(--t12); }
+.panel-head.sub { margin-top: var(--s4); padding-top: var(--s3); min-height: 0; border-top: 1px solid var(--line); }
+.panel-head.sub h3 { font-size: var(--t12); font-weight: 600; color: var(--muted); }
+.btn.more { margin-top: var(--s3); }
 .link { font-size: var(--t12); }
 .note { margin-top: var(--s3); font-size: var(--t12); color: var(--faint); max-width: 72ch; }
 .empty { color: var(--muted); padding: var(--s2) 0; }
+ul.note { list-style: none; padding: 0; }
+ul.note:empty, ul.rows:empty { display: none; }
+.rows .bar { margin-top: var(--s2); }
+.rows + .rows { margin-top: var(--s3); padding-top: var(--s3); border-top: 1px solid var(--line); }
 
 .kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s4); }
 .kpis.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.kpis.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .kpi {
   position: relative; min-width: 0;
   padding: var(--s4) var(--s4) var(--s4) var(--s6);
@@ -318,6 +326,7 @@ dialog label { display: flex; flex-direction: column; gap: 6px; margin-top: var(
 
 @media (max-width: 1200px) {
   .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .kpis.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lanes { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 }
 @media (max-width: 1000px) {
@@ -332,14 +341,15 @@ dialog label { display: flex; flex-direction: column; gap: 6px; margin-top: var(
   }
   .mark { display: none; }
   .nav { flex-direction: row; justify-content: space-around; width: 100%; gap: 0; }
-  .nav a { width: 56px; height: 48px; grid-template-rows: 22px auto; gap: 2px; place-content: center; }
+  .nav li { flex: 1 1 0; min-width: 0; }
+  .nav a { width: auto; max-width: 56px; margin: 0 auto; height: 48px; grid-template-rows: 22px auto; gap: 2px; place-content: center; }
   .nav .label { position: static; transform: none; opacity: 1; padding: 0; border: 0; background: none; color: inherit; font-size: 10px; }
   .main { padding: 0 var(--s4) 96px; }
   .topbar { padding: var(--s4) 0 var(--s3); }
   .topbar-right { width: 100%; row-gap: var(--s2); }
   .topbar-right #refresh { order: 1; margin-left: auto; }
   .topbar-right #refreshed { order: 2; flex-basis: 100%; }
-  .kpis, .kpis.three { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+  .kpis, .kpis.three, .kpis.four { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
   .kpis > .kpi:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .kpi { padding: var(--s3) var(--s4); }
   .kpi .value { grid-column: 1; grid-row: 2; font-size: var(--t20); }
