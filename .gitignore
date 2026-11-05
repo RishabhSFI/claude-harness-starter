@@ -1,3 +1,13 @@
 reports/*.tmp
 __pycache__/
 .claude/loop/
+mc/state/
+.claude/secrets-cache.json
+
+# Your files. The starter never ships them; they are yours to keep. Track them in
+# your own private repo with `git add -f <file>` once, or leave them local.
+/projects.json
+/wiki/
+/reports/
+/ledger.md
+/mc/state/

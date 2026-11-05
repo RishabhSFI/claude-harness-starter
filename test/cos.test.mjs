@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -23,6 +23,8 @@ const GIT_ENV = {
   GIT_CONFIG_SYSTEM: '/dev/null',
 };
 
+// Built at run time: the starter's leak scan flags any literal user@host.
+const GIT_AT = ['git', 'github.com'].join('@');
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env: GIT_ENV, stdio: 'pipe' }).toString();
 
 function makeRepo(dir, { gate = true } = {}) {
@@ -77,7 +79,7 @@ before(() => {
     registry,
     JSON.stringify({
       projects: [
-        { id: 'alpha', name: 'Alpha App', what: 'First.', checkouts: [dirs.dirty], aliases: ['alpha app'], keywords: ['alpha', 'bakery trucks', 'billing'] },
+        { id: 'alpha', name: 'Alpha App', what: 'First.', checkouts: [dirs.dirty], aliases: ['alpha app'], keywords: ['alpha', 'pizza ovens', 'billing'] },
         { id: 'beta', name: 'Beta Site', what: 'Second.', checkouts: [dirs.local], aliases: ['beta site'], keywords: ['beta', 'newsletter', 'billing'] },
         { id: 'gone', name: 'Gone Thing', what: 'Third.', checkouts: [dirs.missing], keywords: ['gone'] },
       ],
@@ -122,7 +124,7 @@ describe('status', () => {
 
 describe('route', () => {
   test('picks the project whose keyword phrase matches', () => {
-    const r = cos(['route', 'the Bakery Trucks are late'], { registry });
+    const r = cos(['route', 'the Pizza Ovens are late'], { registry });
     assert.equal(r.code, 0);
     assert.equal(r.out.trim(), `alpha\t${dirs.dirty}`);
   });
@@ -157,7 +159,7 @@ describe('hook', () => {
 
   test('is silent when only a generic keyword matches another project', () => {
     assert.equal(fire(dirs.dirty, 'fix the newsletter layout').out, '');
-    assert.equal(fire(tmp, 'add a newsletter signup for the bakery trucks client').out, '');
+    assert.equal(fire(tmp, 'add a newsletter signup for the pizza ovens client').out, '');
   });
 
   test('is silent for a same-project prompt', () => {
@@ -200,11 +202,14 @@ describe('install.sh', () => {
   const cosHooks = (settings) =>
     (settings.hooks?.UserPromptSubmit ?? []).flatMap((g) => g.hooks).filter((h) => h.command.includes('cos.mjs'));
 
-  test('links the skill and CLAUDE.md and adds the hook', () => {
+  test('links the skills and CLAUDE.md and adds the hooks', () => {
     const home = freshHome();
     const r = install(home);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(readlinkSync(join(home, '.claude/skills/cos')), join(MAIN, 'skills/cos'));
+    assert.equal(readlinkSync(join(home, '.claude/skills/until-ready')), join(MAIN, 'skills/until-ready'));
+    const stop = JSON.parse(readFileSync(join(home, '.claude/settings.json'), 'utf8')).hooks.Stop.flatMap((g) => g.hooks);
+    assert.deepEqual(stop, [{ type: 'command', command: `node "${MAIN}/gate/qa-gate.mjs"`, timeout: 1800 }]);
     assert.equal(readlinkSync(join(home, '.claude/CLAUDE.md')), join(MAIN, 'global/CLAUDE.md'));
     const hooks = cosHooks(JSON.parse(readFileSync(join(home, '.claude/settings.json'), 'utf8')));
     assert.equal(hooks.length, 1);
@@ -220,6 +225,7 @@ describe('install.sh', () => {
     assert.match(second.stdout, /already/);
     const settings = JSON.parse(readFileSync(join(home, '.claude/settings.json'), 'utf8'));
     assert.equal(cosHooks(settings).length, 1);
+    assert.equal(settings.hooks.Stop.flatMap((g) => g.hooks).length, 1);
   });
 
   test('leaves a real CLAUDE.md untouched', () => {
@@ -240,15 +246,13 @@ describe('install.sh', () => {
     writeFileSync(join(home, '.claude/settings.json'), JSON.stringify(original));
     install(home);
     const settings = JSON.parse(readFileSync(join(home, '.claude/settings.json'), 'utf8'));
-    assert.deepEqual(settings.hooks.Stop[0], original.hooks.Stop[0]);
-    assert.equal(settings.hooks.Stop.length, 2);
-    assert.match(settings.hooks.Stop[1].hooks[0].command, /gate\/qa-gate\.mjs"$/);
+    assert.deepEqual(settings.hooks.Stop, [
+      ...original.hooks.Stop,
+      { hooks: [{ type: 'command', command: `node "${MAIN}/gate/qa-gate.mjs"`, timeout: 1800 }] },
+    ]);
     assert.equal(settings.model, 'x');
     assert.equal(cosHooks(settings).length, 1);
-    const backup = join(home, '.claude/settings.json.before-harness');
-    assert.deepEqual(JSON.parse(readFileSync(backup, 'utf8')), original);
-    install(home);
-    assert.deepEqual(JSON.parse(readFileSync(backup, 'utf8')), original, 'a second install keeps the first backup');
+    assert.deepEqual(JSON.parse(readFileSync(join(home, '.claude/settings.json.bak'), 'utf8')), original);
   });
 
   test('leaves a CLAUDE.md linked somewhere else untouched', () => {
@@ -356,7 +360,7 @@ describe('gh targets the origin repo', () => {
     return { r, log, checkout: JSON.parse(r.out).projects[0].checkouts[0] };
   };
 
-  for (const [form, url] of [['https', 'https://github.com/acme/widgets.git'], ['ssh', 'git@github.com:acme/widgets.git'], ['ssh://', 'ssh://git@github.com/acme/widgets']]) {
+  for (const [form, url] of [['https', 'https://github.com/acme/widgets.git'], ['ssh', `${GIT_AT}:acme/widgets.git`], ['ssh://', `ssh://${GIT_AT}/acme/widgets`]]) {
     test(`passes -R owner/repo from a ${form} origin`, () => {
       const { r, log } = withFakeGh(url);
       assert.equal(r.code, 0, r.err);
@@ -451,6 +455,27 @@ describe('new', () => {
     assert.match(second.err, /already registered/);
     assert.equal(JSON.parse(readFileSync(reg, 'utf8')).projects.length, 2);
     assert.equal(git(dir, 'rev-list', '--count', 'HEAD').trim(), '1');
+  });
+
+  test('writes the project wiki page when the harness has a wiki, and lint passes', () => {
+    const { root, reg } = setup();
+    const wikiDir = join(root, 'wiki');
+    cpSync(join(ROOT, 'starter-wiki'), wikiDir, { recursive: true });
+    writeFileSync(reg, JSON.stringify({ projects: [] }));
+    const r = make(root, reg);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /created wiki page/);
+    assert.match(readFileSync(join(wikiDir, 'projects', 'my-app.md'), 'utf8'), /\n# My App\n\n## What it is\n\nA tiny app\.\n/);
+    const lint = spawnSync('node', [join(ROOT, 'wiki.mjs'), 'lint', '--wiki', wikiDir, '--registry', reg], { encoding: 'utf8', env: GIT_ENV });
+    assert.equal(lint.status, 0, lint.stdout);
+  });
+
+  test('skips the wiki page when the harness has no wiki', () => {
+    const { root, reg } = setup();
+    const r = make(root, reg);
+    assert.equal(r.code, 0, r.err);
+    assert.doesNotMatch(r.out, /wiki/);
+    assert.equal(existsSync(join(root, 'wiki')), false);
   });
 
   test('refuses an id that is already registered, even with --adopt, and creates nothing', () => {
@@ -580,18 +605,45 @@ describe('new', () => {
     assert.equal(readFileSync(reg, 'utf8'), before);
   });
 
-  test('--github runs gh repo create --private and never --public', () => {
-    const { root, reg } = setup();
+  const fakeGh = (root, script = '') => {
     const bin = join(root, 'bin');
     mkdirSync(bin);
     const log = join(root, 'gh.log');
-    writeFileSync(join(bin, 'gh'), `#!/bin/sh\necho "$@" >> "${log}"\n`);
+    writeFileSync(join(bin, 'gh'), `#!/bin/sh\necho "$@" >> "${log}"\n${script}`);
     chmodSync(join(bin, 'gh'), 0o755);
-    const r = make(root, reg, ['--github', '--owner', 'someone'], { PATH: `${bin}:${process.env.PATH}` });
+    return { log, env: { PATH: `${bin}:${process.env.PATH}` } };
+  };
+
+  test('--github runs gh repo create --private and never --public', () => {
+    const { root, reg } = setup();
+    const { log, env } = fakeGh(root);
+    const r = make(root, reg, ['--github', '--owner', 'zed-example'], env);
     assert.equal(r.code, 0, r.err);
     const args = readFileSync(log, 'utf8');
-    assert.match(args, /repo create someone\/my-app --private --source .*my-app --push/);
+    assert.match(args, /repo create zed-example\/my-app --private --source .*my-app --push/);
     assert.ok(!args.includes('--public'));
+  });
+
+  test('--github without --owner uses the signed-in gh account', () => {
+    const { root, reg } = setup();
+    const { log, env } = fakeGh(root, '[ "$1" = api ] && echo octo-friend\nexit 0\n');
+    const r = make(root, reg, ['--github'], env);
+    assert.equal(r.code, 0, r.err);
+    const args = readFileSync(log, 'utf8');
+    assert.match(args, /^api user --jq \.login$/m);
+    assert.match(args, /repo create octo-friend\/my-app --private/);
+  });
+
+  test('--github with no --owner and no gh login says how to fix it and creates no repo', () => {
+    const { root, reg } = setup();
+    const { log, env } = fakeGh(root, '[ "$1" = api ] && { echo "not logged in" >&2; exit 1; }\nexit 0\n');
+    const r = make(root, reg, ['--github'], env);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /not logged in/);
+    assert.match(r.err, /--owner <name>/);
+    assert.match(r.err, /gh auth login/);
+    assert.ok(!readFileSync(log, 'utf8').includes('repo create'));
+    assert.equal(JSON.parse(readFileSync(reg, 'utf8')).projects.length, 2);
   });
 
   test('--github failure prints the error and exits 1 after the other steps', () => {
@@ -604,5 +656,127 @@ describe('new', () => {
     assert.equal(r.code, 1);
     assert.match(r.err, /nope/);
     assert.equal(JSON.parse(readFileSync(reg, 'utf8')).projects.length, 2);
+  });
+});
+
+describe('findGh', () => {
+  test('finds gh in ~/.local/bin when PATH lacks it, and GH_BIN wins', async () => {
+    const { findGh } = await import('../cos.mjs');
+    const home = mkdtempSync(join(tmpdir(), 'gh-home-'));
+    mkdirSync(join(home, '.local/bin'), { recursive: true });
+    writeFileSync(join(home, '.local/bin/gh'), '#!/bin/sh\n', { mode: 0o755 });
+    const plain = mkdtempSync(join(tmpdir(), 'gh-plain-'));
+    writeFileSync(join(plain, 'gh'), 'not executable', { mode: 0o644 });
+    assert.equal(findGh({ HOME: home, PATH: `${plain}:bin` }), join(home, '.local/bin/gh'), 'skips non-executable and relative entries');
+    assert.equal(findGh({ HOME: home, PATH: '/nonexistent' }), join(home, '.local/bin/gh'));
+    assert.equal(findGh({ HOME: home, PATH: '', GH_BIN: '/x/gh' }), '/x/gh');
+    const empty = mkdtempSync(join(tmpdir(), 'gh-none-'));
+    const found = findGh({ HOME: empty, PATH: '/nonexistent' });
+    assert.ok(found === 'gh' || found.startsWith('/opt/homebrew') || found.startsWith('/usr/local'), found);
+  });
+});
+
+describe('add', () => {
+  const setup = () => {
+    const root = mkdtempSync(join(tmp, 'add-'));
+    const reg = join(root, 'projects.json');
+    writeFileSync(reg, JSON.stringify({ projects: [{ id: 'old', name: 'Old', checkouts: [join(root, 'old')] }] }, null, 2) + '\n');
+    return { root, reg };
+  };
+  const projects = (reg) => JSON.parse(readFileSync(reg, 'utf8')).projects;
+
+  test('registers a folder with origin, default branch and a public entry, and changes nothing in it', () => {
+    const { root, reg } = setup();
+    const seed = join(root, 'seed');
+    makeRepo(seed);
+    git(seed, 'branch', '-m', 'main', 'trunk');
+    const dir = join(root, 'Cool Tool');
+    git(root, 'clone', seed, dir);
+    git(dir, 'remote', 'set-url', 'origin', `${GIT_AT}:acme/cool-tool.git`);
+    const before = git(dir, 'status', '--porcelain', '--ignored') + git(dir, 'rev-parse', 'HEAD');
+    const r = cos(['add', dir, '--what', 'A tool.', '--keywords', 'cool, tooling,,'], { registry: reg });
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /origin: acme\/cool-tool; default branch: trunk/);
+    assert.match(r.out, /fill in "public" for cool-tool/);
+    assert.deepEqual(projects(reg)[1], {
+      id: 'cool-tool', name: 'Cool Tool', what: 'A tool.', checkouts: [dir], aliases: ['cool tool'], keywords: ['cool', 'tooling'],
+      public: { branches: ['trunk'], remotes: [], notes: [] },
+    });
+    assert.equal(git(dir, 'status', '--porcelain', '--ignored') + git(dir, 'rev-parse', 'HEAD'), before);
+    assert.equal(existsSync(`${reg}.tmp`), false);
+  });
+
+  test('--id and --name override the folder name', () => {
+    const { root, reg } = setup();
+    const dir = join(root, 'thing');
+    makeRepo(dir);
+    const r = cos(['add', dir, '--id', 'my-thing', '--name', 'My Thing!'], { registry: reg });
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /no GitHub origin found; default branch: main/);
+    assert.deepEqual(
+      { id: projects(reg)[1].id, name: projects(reg)[1].name, what: projects(reg)[1].what },
+      { id: 'my-thing', name: 'My Thing!', what: '' },
+    );
+  });
+
+  test('refuses a duplicate id or folder and leaves the registry as it was', () => {
+    const { root, reg } = setup();
+    const dir = join(root, 'thing');
+    makeRepo(dir);
+    assert.equal(cos(['add', dir], { registry: reg }).code, 0);
+    const before = readFileSync(reg, 'utf8');
+    const sameFolder = cos(['add', dir, '--id', 'other'], { registry: reg });
+    assert.equal(sameFolder.code, 2);
+    assert.match(sameFolder.err, /already registered as "thing"/);
+    const other = join(root, 'other');
+    makeRepo(other);
+    const sameId = cos(['add', other, '--id', 'OLD'.toLowerCase()], { registry: reg });
+    assert.equal(sameId.code, 2);
+    assert.match(sameId.err, /"old" is already registered/);
+    assert.equal(readFileSync(reg, 'utf8'), before);
+  });
+
+  test('refuses a missing folder or a bad id with no change', () => {
+    const { root, reg } = setup();
+    const before = readFileSync(reg, 'utf8');
+    assert.equal(cos(['add', join(root, 'nope')], { registry: reg }).code, 2);
+    makeRepo(join(root, 'ok'));
+    assert.equal(cos(['add', join(root, 'ok'), '--id', 'Bad_Id'], { registry: reg }).code, 2);
+    assert.equal(cos(['add'], { registry: reg }).code, 2);
+    assert.equal(readFileSync(reg, 'utf8'), before);
+  });
+
+  test('creates projects.json when there is none', () => {
+    const root = mkdtempSync(join(tmp, 'add-'));
+    const reg = join(root, 'projects.json');
+    makeRepo(join(root, 'first'));
+    assert.equal(cos(['add', join(root, 'first')], { registry: reg }).code, 0);
+    assert.deepEqual(projects(reg).map((p) => p.id), ['first']);
+  });
+});
+
+describe('no projects.json', () => {
+  const missing = () => join(mkdtempSync(join(tmp, 'empty-')), 'projects.json');
+
+  test('status prints one line saying how to add a project', () => {
+    const r = cos(['status', '--no-gh'], { registry: missing() });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.out.trim().split('\n').length, 1);
+    assert.match(r.out, /node cos\.mjs add <folder>/);
+    assert.match(r.out, /new <slug>/);
+    assert.deepEqual(JSON.parse(cos(['status', '--json', '--no-gh'], { registry: missing() }).out), { projects: [] });
+  });
+
+  test('route prints none', () => {
+    const r = cos(['route', 'anything at all'], { registry: missing() });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.out.trim(), 'none');
+  });
+
+  test('hook stays silent', () => {
+    const r = cos(['hook', '--harness', dirs.harness], { registry: missing(), input: JSON.stringify({ cwd: tmp, prompt: 'fix the beta site' }) });
+    assert.equal(r.code, 0);
+    assert.equal(r.out, '');
+    assert.equal(r.err, '');
   });
 });

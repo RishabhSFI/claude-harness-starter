@@ -1,16 +1,28 @@
 {
   "projects": [
     {
-      "id": "my-app",
-      "name": "My App",
-      "what": "One line on what it is.",
-      "checkouts": ["~/Projects/my-app"],
-      "aliases": ["my-app", "my app"],
-      "keywords": ["my app", "dashboard", "billing"],
+      "id": "recipe-box",
+      "name": "Recipe Box",
+      "what": "Small web app for saving and sharing family recipes.",
+      "checkouts": [
+        "~/Projects/recipe-box"
+      ],
+      "aliases": [
+        "recipe box"
+      ],
+      "keywords": [
+        "recipes",
+        "meal plan"
+      ],
       "public": {
-        "branches": ["main"],
+        "branches": [
+          "main"
+        ],
         "remotes": [],
-        "notes": ["Vercel production: `vercel deploy --prod`", "the weekly email workflow"]
+        "notes": [
+          "`vercel deploy --prod` puts the live site out",
+          "the weekly email to subscribers"
+        ]
       }
     }
   ]

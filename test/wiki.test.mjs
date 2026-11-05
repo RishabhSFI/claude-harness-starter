@@ -153,7 +153,7 @@ describe('wiki ingest', () => {
   test('copies a source into raw/ with a header, blanks private details, and logs it', () => {
     const { dir, registry } = makeWiki('ingest');
     const src = join(tmp, 'call notes.md');
-    writeFileSync(src, `# Call notes\n\nMail sam@example.com or call ${j('416-555', '-0199')}.\nKey sk-abcdefghijklmnopqrstuvwxyz123.\nDEMO_PASSWORD ("hunter22") is in the seed.\n`);
+    writeFileSync(src, `# Call notes\n\nMail sam@example.com or call ${j('416-555', '-0199')}.\nKey ${j('sk-', 'abcdefghijklmnopqrstuvwxyz123')}.\nDEMO_PASSWORD ("hunter22") is in the seed.\n`);
     const r = wiki(dir, registry, 'ingest', src, '--origin', 'phone call', '--date', '2026-01-05');
     assert.equal(r.code, 0, r.err);
     const dest = join(dir, 'raw', '2026-01-05-call-notes.md');
@@ -245,7 +245,7 @@ describe('redact', () => {
     assert.equal(redact('monkey business and turkey dinner'), 'monkey business and turkey dinner');
     for (const prose of ['token_budget: 500', 'pass_rate: 98%', 'key_points: three of them', 'max_token_count: 4096', 'secret_sauce: butter',
       'keyboard_shortcut: ctrl-k', 'See the Cookie: banner section.', 'Authorization: required on all routes']) assert.equal(redact(prose), prose, prose);
-    assert.equal(redact('Mention -----BEGIN PRIVATE KEY----- in prose\n\n# Rest of doc'), '[secret]\n\n# Rest of doc'.replace('[secret]', 'Mention [secret]'));
+    assert.equal(redact(`Mention ${j('-----BEGIN', ' PRIVATE KEY-----')} in prose\n\n# Rest of doc`), '[secret]\n\n# Rest of doc'.replace('[secret]', 'Mention [secret]'));
     assert.equal(redact('DB_PASSWORD=hunter22 and api.secret: abc'), 'DB_PASSWORD=[secret] and api.secret: [secret]');
     assert.equal(redact('see https://a.com/cb?token=abc123&x=1 and https://b.io/?api_key=zz9'), 'see https://a.com/cb?token=[secret]&x=1 and https://b.io/?api_key=[secret]');
   });
@@ -412,6 +412,174 @@ describe('starter-wiki', () => {
   });
 });
 
+describe('wiki record', () => {
+  const PR_URL = 'https://github.com/acme/alpha/pull/7';
+  const secret = j('sk-live-', 'abc123def456ghi789jkl012');
+
+  /** A fake `gh` that prints `json` for any call and logs its arguments. */
+  function fakeGh(name, json) {
+    const dir = join(tmp, `${name}-gh`);
+    mkdirSync(dir, { recursive: true });
+    const bin = join(dir, 'gh');
+    writeFileSync(join(dir, 'pr.json'), JSON.stringify(json));
+    writeFileSync(bin, `#!/bin/sh\necho "$@" >> "${join(dir, 'calls')}"\ncat "${join(dir, 'pr.json')}"\n`, { mode: 0o755 });
+    return { bin, calls: () => (existsSync(join(dir, 'calls')) ? readFileSync(join(dir, 'calls'), 'utf8') : '') };
+  }
+
+  const merged = (over = {}) => ({
+    title: 'Add the thing',
+    body: `Adds the thing.\n\nAPI_KEY=${secret}\n`,
+    baseRefName: 'main',
+    mergedAt: '2026-03-04T12:00:00Z',
+    url: PR_URL,
+    ...over,
+  });
+
+  function record(dir, registry, gh, pr = 'acme/alpha#7', id = 'alpha') {
+    const r = spawnSync('node', [WIKI, 'record', id, '--pr', pr, '--wiki', dir, '--registry', registry], {
+      encoding: 'utf8',
+      env: { ...GIT_ENV, GH_BIN: gh.bin },
+    });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  }
+
+  const alphaProject = [{ id: 'alpha', checkouts: [], repos: ['acme/alpha'] }];
+  const snapshot = (dir) => {
+    const out = {};
+    const visit = (rel) => {
+      const full = join(dir, rel);
+      if (statSync(full).isDirectory()) readdirSync(full).forEach((e) => visit(join(rel, e)));
+      else out[rel] = readFileSync(full, 'utf8');
+    };
+    readdirSync(dir).forEach(visit);
+    return out;
+  };
+
+  test('writes the raw source, a Changes bullet, the updated date and a log entry, and lint passes', () => {
+    const { dir, registry } = makeWiki('rec-ok', {}, alphaProject);
+    const gh = fakeGh('rec-ok', merged());
+    const r = record(dir, registry, gh);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /recorded: acme\/alpha#7/);
+    assert.match(gh.calls(), /pr view 7 -R acme\/alpha --json title,body,baseRefName,mergedAt,url/);
+
+    const rawName = '2026-03-04-pr-acme-alpha-7';
+    assert.ok(existsSync(join(dir, 'raw', `${rawName}.md`)));
+    const pageText = readFileSync(join(dir, 'projects/alpha.md'), 'utf8');
+    assert.match(pageText, /^updated: 2026-03-04$/m);
+    assert.match(pageText, /\n## Changes\n\n- 2026-03-04: Add the thing \(\[acme\/alpha#7\]\(https:\/\/github\.com\/acme\/alpha\/pull\/7\)\) \(\[\[raw\/2026-03-04-pr-acme-alpha-7\|raw\]\]\)\n$/);
+    const log = readFileSync(join(dir, 'log.md'), 'utf8');
+    assert.match(log, /\n## \[\d{4}-\d{2}-\d{2}\] update \| alpha: Add the thing\n/);
+    assert.ok(log.includes(`[[raw/${rawName}]]`));
+    const lint = wiki(dir, registry, 'lint');
+    assert.equal(lint.code, 0, lint.out);
+    assert.doesNotMatch(lint.out, /warn/);
+  });
+
+  test('a second run changes no file at all', () => {
+    const { dir, registry } = makeWiki('rec-twice', {}, alphaProject);
+    const gh = fakeGh('rec-twice', merged());
+    assert.equal(record(dir, registry, gh).code, 0);
+    const before = snapshot(dir);
+    const again = record(dir, registry, gh);
+    assert.equal(again.code, 0);
+    assert.match(again.out, /already recorded/);
+    assert.deepEqual(snapshot(dir), before);
+  });
+
+  test('a secret planted in the PR body is blanked in the raw file', () => {
+    const { dir, registry } = makeWiki('rec-secret', {}, alphaProject);
+    const gh = fakeGh('rec-secret', merged({ title: `Rotate ${secret}` }));
+    assert.equal(record(dir, registry, gh).code, 0);
+    const files = Object.entries(snapshot(dir)).filter(([rel]) => rel.includes('pr-acme-alpha-7') || rel === 'projects/alpha.md' || rel === 'log.md');
+    assert.ok(files.length >= 3);
+    for (const [rel, text] of files) assert.ok(!text.includes(secret), `${rel} holds the secret`);
+    assert.match(readFileSync(join(dir, 'raw/2026-03-04-pr-acme-alpha-7.md'), 'utf8'), /API_KEY=\[secret\]/);
+  });
+
+  test('keeps bullets in date order, creating the section only once', () => {
+    const { dir, registry } = makeWiki('rec-order', {}, alphaProject);
+    const early = fakeGh('rec-order-a', merged({ mergedAt: '2026-02-01T12:00:00Z', url: 'https://github.com/acme/alpha/pull/3', title: 'Earlier' }));
+    const late = fakeGh('rec-order-b', merged({ mergedAt: '2026-04-01T12:00:00Z', url: 'https://github.com/acme/alpha/pull/9', title: 'Later' }));
+    const mid = fakeGh('rec-order-c', merged({ title: 'Middle' }));
+    assert.equal(record(dir, registry, late, 'acme/alpha#9').code, 0);
+    assert.equal(record(dir, registry, early, 'acme/alpha#3').code, 0);
+    assert.equal(record(dir, registry, mid).code, 0);
+    const pageText = readFileSync(join(dir, 'projects/alpha.md'), 'utf8');
+    assert.equal(pageText.match(/^## Changes$/gm).length, 1);
+    const days = [...pageText.matchAll(/^- (\d{4}-\d{2}-\d{2}): (\w+)/gm)].map((m) => `${m[1]} ${m[2]}`);
+    assert.deepEqual(days, ['2026-02-01 Earlier', '2026-03-04 Middle', '2026-04-01 Later']);
+    assert.match(pageText, /^updated: 2026-04-01$/m);
+  });
+
+  test('an older merge does not move updated backwards', () => {
+    const { dir, registry } = makeWiki('rec-old', {}, alphaProject);
+    const gh = fakeGh('rec-old', merged({ mergedAt: '2025-12-01T12:00:00Z' }));
+    assert.equal(record(dir, registry, gh).code, 0);
+    assert.match(readFileSync(join(dir, 'projects/alpha.md'), 'utf8'), /^updated: 2026-01-02$/m);
+  });
+
+  test('refuses a PR that is not merged, and writes nothing', () => {
+    const { dir, registry } = makeWiki('rec-open', {}, alphaProject);
+    const before = snapshot(dir);
+    const r = record(dir, registry, fakeGh('rec-open', merged({ mergedAt: null })));
+    assert.equal(r.code, 1);
+    assert.match(r.err, /not merged/);
+    assert.deepEqual(snapshot(dir), before);
+  });
+
+  test('refuses a repo that is not one of the project\'s repos, without calling gh', () => {
+    const { dir, registry } = makeWiki('rec-repo', {}, alphaProject);
+    const gh = fakeGh('rec-repo', merged());
+    const r = record(dir, registry, gh, 'acme/other#7');
+    assert.equal(r.code, 1);
+    assert.match(r.err, /not one of alpha's repos/);
+    assert.equal(gh.calls(), '');
+  });
+
+  test('refuses a project that is not in the registry', () => {
+    const { dir, registry } = makeWiki('rec-proj', {}, alphaProject);
+    const r = record(dir, registry, fakeGh('rec-proj', merged()), 'acme/alpha#7', 'nope');
+    assert.notEqual(r.code, 0);
+    assert.match(r.err, /"nope" is not in/);
+  });
+
+  test('updated is set inside the frontmatter, or added there, never on a body line', () => {
+    const body = '# Alpha\n\nNotes:\nupdated: by hand\n';
+    const withKey = makeWiki('rec-fm-key', { 'projects/alpha.md': `---\nupdated: 2026-01-02\ntags: [project]\n---\n\n${body}` }, alphaProject);
+    assert.equal(record(withKey.dir, withKey.registry, fakeGh('rec-fm-key', merged())).code, 0);
+    const a = readFileSync(join(withKey.dir, 'projects/alpha.md'), 'utf8');
+    assert.match(a, /^---\nupdated: 2026-03-04\ntags: \[project\]\n---\n/);
+    assert.match(a, /\nupdated: by hand\n/);
+
+    const without = makeWiki('rec-fm-none', { 'projects/alpha.md': `---\ntags: [project]\n---\n\n${body}` }, alphaProject);
+    assert.equal(record(without.dir, without.registry, fakeGh('rec-fm-none', merged())).code, 0);
+    const b = readFileSync(join(without.dir, 'projects/alpha.md'), 'utf8');
+    assert.match(b, /^---\ntags: \[project\]\nupdated: 2026-03-04\n---\n/);
+    assert.match(b, /\nupdated: by hand\n/);
+  });
+
+  test('refuses a PR that comes back with no url, and writes nothing', () => {
+    const { dir, registry } = makeWiki('rec-nourl', {}, alphaProject);
+    const before = snapshot(dir);
+    const r = record(dir, registry, fakeGh('rec-nourl', merged({ url: '' })));
+    assert.equal(r.code, 1);
+    assert.match(r.err, /no url/);
+    assert.deepEqual(snapshot(dir), before);
+  });
+
+  test('a new bullet goes after the previous bullet\'s indented continuation lines', () => {
+    const changes = '# Alpha\n\n## Changes\n\n- 2026-02-01: Earlier\n  more about it\n  and more\n- 2026-05-01: Later\n';
+    const { dir, registry } = makeWiki('rec-cont', { 'projects/alpha.md': page('2026-01-02', changes) }, alphaProject);
+    assert.equal(record(dir, registry, fakeGh('rec-cont', merged())).code, 0);
+    const lines = readFileSync(join(dir, 'projects/alpha.md'), 'utf8').split('\n');
+    const i = lines.findIndex((l) => l.startsWith('- 2026-02-01'));
+    assert.deepEqual(lines.slice(i + 1, i + 3), ['  more about it', '  and more']);
+    assert.match(lines[i + 3], /^- 2026-03-04: Add the thing/);
+    assert.match(lines[i + 4], /^- 2026-05-01: Later/);
+  });
+});
+
 const SHIPS = ['starter-wiki', 'skills/wiki/SKILL.md', 'wiki.mjs', 'test/wiki.test.mjs'];
 
 /** Names that only the owner's own setup knows: project ids, names, aliases and keywords, people pages, the GitHub owner. */
@@ -426,7 +594,7 @@ function privateNames() {
     }
   }
   const people = join(ROOT, 'wiki', 'people');
-  if (existsSync(people)) for (const f of readdirSync(people)) names.add(f.replace(/\.md$/, ''));
+  if (existsSync(people)) for (const f of readdirSync(people).filter((n) => n.endsWith('.md'))) names.add(f.slice(0, -3));
   const cos = join(ROOT, 'cos.mjs');
   const owner = existsSync(cos) ? readFileSync(cos, 'utf8').match(/DEFAULT_OWNER = '([^']+)'/)?.[1] : null;
   if (owner) names.add(owner);

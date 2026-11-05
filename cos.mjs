@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, constants as fsConstants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEFAULT_DESKTOP_DIR, DEFAULT_PROJECTS_DIR, findPaused, markResumed } from './limits.mjs';
+import { USER_FILES } from './starter-update.mjs';
+import { attachSecretsToStatus, parseSecrets, resolveSecrets, renderSecrets, secretsJson, writeSecretsPage } from './secrets.mjs';
 
 const SELF_DIR = dirname(fileURLToPath(import.meta.url));
 const GIT_TIMEOUT_MS = 10_000;
@@ -12,8 +15,14 @@ const FAILING_CHECK = new Set(['FAILURE', 'TIMED_OUT', 'STARTUP_FAILURE', 'ERROR
 const SUCCESS_CHECK = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
 const IGNORE_LINES = ['.claude/loop/', '.env', '.env.*', '!.env.example', 'node_modules/'];
 
+/**
+ * The owner's own files. The starter never ships them, `update` never touches them, and the
+ * starter's .gitignore lists them. A trailing slash means the whole folder.
+ */
+export { USER_FILES };
+
 const DEFAULT_ROOT = '~/Projects';
-const VALUE_FLAGS = new Set(['registry', 'harness', 'what', 'root', 'owner', 'fake-prs']);
+const VALUE_FLAGS = new Set(['registry', 'harness', 'what', 'root', 'owner', 'fake-prs', 'id', 'name', 'keywords', 'to', 'message', 'from', 'mark', 'paused-at', 'projects-dir', 'desktop-dir', 'marks-file', 'now']);
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 const CLAUDE_MD = (name, what) => `# ${name}
@@ -31,7 +40,7 @@ Nothing is live yet. When this project gets a deploy, list here what makes it pu
 
 /**
  * @typedef {{branches: string[], remotes: string[], notes: string[]}} PublicSurface
- * @typedef {{id: string, name: string, what: string, checkouts: string[], aliases: string[], keywords: string[], public: PublicSurface | null}} Project
+ * @typedef {{id: string, name: string, what: string, checkouts: string[], aliases: string[], keywords: string[], public: PublicSurface | null, repos: string[], site: string | null, secrets: import('./secrets.mjs').SecretSpec[]}} Project
  */
 
 function expandHome(p) {
@@ -46,9 +55,14 @@ function parsePublic(raw) {
   return { branches: list(raw.branches), remotes: list(raw.remotes), notes: list(raw.notes) };
 }
 
+/** A missing file is an empty registry, so a fresh install works before the first `add`. */
+function readRegistryRaw(file) {
+  return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : { projects: [] };
+}
+
 /** @returns {Project[]} */
-function loadRegistry(file) {
-  const raw = JSON.parse(readFileSync(file, 'utf8'));
+export function loadRegistry(file) {
+  const raw = readRegistryRaw(file);
   if (!Array.isArray(raw?.projects)) throw new Error(`${file}: expected {"projects": [...]}`);
   return raw.projects.map((p, i) => {
     if (typeof p?.id !== 'string' || typeof p?.name !== 'string' || !Array.isArray(p?.checkouts)) {
@@ -62,6 +76,9 @@ function loadRegistry(file) {
       aliases: Array.isArray(p.aliases) ? p.aliases.map(String) : [],
       keywords: Array.isArray(p.keywords) ? p.keywords.map(String) : [],
       public: parsePublic(p.public),
+      repos: Array.isArray(p.repos) ? p.repos.map(String) : [],
+      site: typeof p.site === 'string' ? p.site : null,
+      secrets: parseSecrets(p.secrets, `${file}: projects[${i}]`),
     };
   });
 }
@@ -84,6 +101,27 @@ function parseArgs(argv) {
   }
   return { flags, positional };
 }
+
+/**
+ * The GitHub CLI's path. Shells started by apps (the desktop app's terminal tabs, launchd)
+ * often lack ~/.local/bin or Homebrew on PATH, so check the usual install spots too.
+ */
+export function findGh(env = process.env) {
+  if (env.GH_BIN) return env.GH_BIN;
+  const home = env.HOME || homedir();
+  const dirs = [...String(env.PATH || '').split(':'), join(home, '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin'];
+  for (const dir of dirs.filter((d) => d && isAbsolute(d))) {
+    const p = join(dir, 'gh');
+    try {
+      if (statSync(p).isFile()) {
+        accessSync(p, fsConstants.X_OK);
+        return p;
+      }
+    } catch {}
+  }
+  return 'gh';
+}
+const GH = findGh();
 
 function run(cmd, args, cwd, timeout) {
   const r = spawnSync(cmd, args, {
@@ -132,7 +170,7 @@ function listPullRequests(cwd, repo, fakePrsFile) {
   const fields = 'number,title,headRefName,baseRefName,isDraft,url,statusCheckRollup,mergeable,reviewDecision';
   const r = fakePrsFile
     ? { ok: true, out: readFileSync(fakePrsFile, 'utf8') }
-    : run('gh', ['pr', 'list', '-R', repo, '--json', fields, '--limit', '20'], cwd, GH_TIMEOUT_MS);
+    : run(GH, ['pr', 'list', '-R', repo, '--json', fields, '--limit', '20'], cwd, GH_TIMEOUT_MS);
   if (!r.ok) return { prs: [], note: `gh pr list failed: ${r.err.split('\n')[0] || 'unknown error'}` };
   try {
     const prs = JSON.parse(r.out).map((pr) => ({
@@ -319,7 +357,7 @@ function describeCheckout(c) {
   return parts.join('; ');
 }
 
-function describePublic(surface, defaultBranch = 'main') {
+export function describePublic(surface, defaultBranch = 'main') {
   if (!surface) return `Public: ${defaultBranch} on origin (nothing declared, default branch assumed)`;
   const parts = [];
   if (surface.branches.length) parts.push(`${surface.branches.join(', ')} on origin`);
@@ -404,16 +442,85 @@ function owningProject(projects, cwd) {
   return best?.project ?? null;
 }
 
-function cmdStatus(projects, flags) {
+/** Online secret checks are cached beside the registry, in the harness's ignored `.claude/` state. */
+const secretsCacheFor = (registryFile) => join(dirname(resolve(registryFile)), '.claude', 'secrets-cache.json');
+
+const NO_PROJECTS = 'No projects yet. Register a folder with `node cos.mjs add <folder>`, or start one with `node cos.mjs new <slug> --what "..."`.';
+
+function cmdStatus(projects, flags, _positional, registryFile) {
+  if (!projects.length && !flags.json) {
+    console.log(NO_PROJECTS);
+    return;
+  }
   const report = gatherStatus(projects, { useGh: !flags['no-gh'], fakePrs: flags['fake-prs'] });
+  attachSecretsToStatus(report, projects, { online: !flags['no-gh'], gh: GH, cacheFile: secretsCacheFor(registryFile) });
   console.log(flags.json ? JSON.stringify({ projects: report }, null, 2) : renderStatus(report));
 }
 
-function readRegistryRaw(file) {
-  return JSON.parse(readFileSync(file, 'utf8'));
+function cmdSecrets(projects, flags, _positional, registryFile) {
+  if (flags['write-page']) {
+    const dir = wikiDirFor({ registryFile });
+    if (!existsSync(dir)) throw new Error(`no wiki folder at ${dir}`);
+    const { file, changed } = writeSecretsPage(projects, dir);
+    console.log(`${changed ? 'wrote' : 'unchanged'} ${tilde(file)}`);
+    return;
+  }
+  const results = resolveSecrets(projects, { gh: GH, refresh: true, cacheFile: secretsCacheFor(registryFile) });
+  console.log(flags.json ? JSON.stringify(secretsJson(results), null, 2) : renderSecrets(results));
+}
+
+const fmtTime = (iso) =>
+  new Date(iso).toLocaleString('en-CA', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+
+/**
+ * Sessions stopped at a usage limit. Read-only unless `--mark <sessionId>`, which records that this pause was resumed.
+ * `--due` lists only pauses whose reset has passed, in chats that aren't archived, that nobody has resumed yet.
+ */
+function cmdPaused(projects, flags) {
+  const opts = {
+    projectsDir: flags['projects-dir'] ? resolve(expandHome(flags['projects-dir'])) : DEFAULT_PROJECTS_DIR,
+    desktopDir: flags['desktop-dir'] ? resolve(expandHome(flags['desktop-dir'])) : DEFAULT_DESKTOP_DIR,
+    marksFile: flags['marks-file'] ? resolve(expandHome(flags['marks-file'])) : join(SELF_DIR, 'mc', 'state', 'resumed.json'),
+    now: flags.now ? new Date(flags.now) : new Date(),
+  };
+  if (Number.isNaN(opts.now.getTime())) throw new UsageError('--now needs an ISO date');
+  if (flags['paused-at'] && Number.isNaN(Date.parse(flags['paused-at']))) throw new UsageError('--paused-at needs an ISO date');
+  if (flags.mark) {
+    const result = markResumed(flags.mark, { ...opts, pausedAt: flags['paused-at'] ?? null });
+    const said = {
+      marked: 'marked as resumed',
+      already: 'already marked',
+      'not-paused': 'not paused any more; nothing to mark',
+      'not-due': 'paused again and its new reset has not passed; left unmarked so it is woken after that reset',
+      'new-pause': 'paused again since that listing; left unmarked so it is woken after the new reset',
+    };
+    console.log(`${flags.mark}: ${said[result]}`);
+    return;
+  }
+  const pauses = findPaused(opts)
+    .filter((p) => !flags.due || (p.due && !p.handled && !p.archived))
+    .map(({ file: _file, ...p }) => ({ ...p, project: p.cwd ? owningProject(projects, p.cwd)?.id ?? null : null }));
+  if (flags.json) {
+    console.log(JSON.stringify({ paused: pauses }, null, 2));
+    return;
+  }
+  if (!pauses.length) {
+    console.log(flags.due ? 'No paused sessions are due to resume.' : 'No sessions are paused at a usage limit.');
+    return;
+  }
+  console.log(`${flags.due ? 'Due to resume' : 'Paused at a usage limit'} (${pauses.length}):`);
+  for (const p of pauses) {
+    const when = p.due ? `reset ${fmtTime(p.resetsAt)}, due now` : `resets ${fmtTime(p.resetsAt)}`;
+    const notes = [p.resetGuessed ? 'reset time guessed' : null, p.handled ? 'resume already sent' : null, p.archived ? 'archived' : null].filter(Boolean);
+    console.log(`- ${p.title ?? '(untitled)'}${p.project ? ` [${p.project}]` : ''}: paused ${fmtTime(p.pausedAt)}, ${when}${notes.length ? ` (${notes.join(', ')})` : ''}`);
+    console.log(`  ${p.localId ?? p.sessionId}  ${p.cwd ? tilde(p.cwd) : 'cwd unknown'}`);
+  }
 }
 
 const titleCase = (slug) => slug.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+
+/** The wiki sits beside projects.json in the harness folder. */
+const wikiDirFor = (s) => join(dirname(resolve(s.registryFile)), 'wiki');
 
 /** Ordered so a rerun skips what already holds: each `done` inspects the world, not a record of past runs. */
 const NEW_STEPS = [
@@ -457,18 +564,15 @@ const NEW_STEPS = [
   {
     name: 'registry entry',
     done: (s) => readRegistryRaw(s.registryFile).projects.some((p) => p.id === s.slug),
+    run: (s) => appendProject(s.registryFile, { ...s, keywords: [], branch: 'main' }),
+  },
+  {
+    name: 'wiki page',
+    enabled: (s) => existsSync(wikiDirFor(s)),
+    done: (s) => existsSync(join(wikiDirFor(s), 'projects', `${s.slug}.md`)),
     run: (s) => {
-      const raw = readRegistryRaw(s.registryFile);
-      raw.projects.push({
-        id: s.slug,
-        name: s.name,
-        what: s.what,
-        checkouts: [tilde(s.dir)],
-        aliases: [s.slug.replaceAll('-', ' ')],
-        keywords: [],
-        public: { branches: ['main'], remotes: [], notes: [] },
-      });
-      writeRegistry(s.registryFile, raw);
+      const r = run(process.execPath, [join(SELF_DIR, 'wiki.mjs'), 'new-page', s.slug, '--wiki', wikiDirFor(s), '--registry', s.registryFile], SELF_DIR, 10_000);
+      if (!r.ok) throw new Error(`wiki new-page failed: ${r.err || 'unknown error'}`);
     },
   },
   {
@@ -481,17 +585,19 @@ const NEW_STEPS = [
         if (!push.ok) throw new Error(`git push failed: ${push.err || 'unknown error'}`);
         return;
       }
-      let owner = s.owner;
-      if (!owner) {
-        const me = run('gh', ['api', 'user', '--jq', '.login'], s.dir, 15_000);
-        if (!me.ok || !me.out.trim()) throw new Error(`couldn't read your GitHub name (run gh auth login, or pass --owner): ${me.err || 'no name returned'}`);
-        owner = me.out.trim();
-      }
-      const r = run('gh', ['repo', 'create', `${owner}/${s.slug}`, '--private', '--source', s.dir, '--push'], s.dir, 60_000);
+      const owner = s.owner ?? signedInOwner();
+      const r = run(GH, ['repo', 'create', `${owner}/${s.slug}`, '--private', '--source', s.dir, '--push'], s.dir, 60_000);
       if (!r.ok) throw new Error(`gh repo create failed: ${r.err || 'unknown error'}`);
     },
   },
 ];
+
+/** Whoever `gh` is signed in as; asked only when --owner is absent. */
+function signedInOwner() {
+  const r = run(GH, ['api', 'user', '--jq', '.login'], undefined, GH_TIMEOUT_MS);
+  if (r.ok && r.out.trim()) return r.out.trim();
+  throw new Error(`can't tell your GitHub name (gh api user: ${r.err.split('\n')[0] || 'no login returned'}). Pass --owner <name> or run gh auth login.`);
+}
 
 function missingIgnoreLines(file) {
   const have = new Set(existsSync(file) ? readFileSync(file, 'utf8').split('\n').map((l) => l.trim()) : []);
@@ -500,8 +606,7 @@ function missingIgnoreLines(file) {
 
 /** @returns {string | null} why `new` must refuse, else null. Sets s.dir to the folder's real on-disk casing. */
 function refuseReason(s, adopt) {
-  const registered = readRegistryRaw(s.registryFile).projects.some((p) => String(p.id).toLowerCase() === s.slug);
-  if (registered) return `project id "${s.slug}" is already registered`;
+  if (idTaken(readRegistryRaw(s.registryFile), s.slug)) return `project id "${s.slug}" is already registered`;
   const parent = dirname(s.dir);
   const existing = existsSync(parent) ? readdirSync(parent).find((n) => n.toLowerCase() === basename(s.dir).toLowerCase()) : undefined;
   if (existing === undefined) return null;
@@ -513,10 +618,67 @@ function refuseReason(s, adopt) {
   return null;
 }
 
+const idTaken = (raw, slug) => raw.projects.some((p) => String(p.id).toLowerCase() === slug);
+
 function writeRegistry(file, raw) {
   const tmp = `${file}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(raw, null, 2)}\n`);
   renameSync(tmp, file);
+}
+
+/** The one shape `new` and `add` both write. The public branch is the default branch until the owner says otherwise. */
+function appendProject(file, { slug, name, what, dir, keywords, branch }) {
+  const raw = readRegistryRaw(file);
+  raw.projects.push({
+    id: slug,
+    name,
+    what,
+    checkouts: [tilde(dir)],
+    aliases: [slug.replaceAll('-', ' ')],
+    keywords,
+    public: { branches: [branch], remotes: [], notes: [] },
+  });
+  writeRegistry(file, raw);
+}
+
+/** Creates whichever of the owner's files are missing; never overwrites one. */
+export function ensureUserFiles(dir) {
+  const made = [];
+  const make = (name, create) => {
+    const path = join(dir, name);
+    if (existsSync(path)) return;
+    mkdirSync(dirname(path), { recursive: true });
+    create(path);
+    made.push(name);
+  };
+  make('projects.json', (f) => writeFileSync(f, '{ "projects": [] }\n'));
+  make('ledger.md', (f) => writeFileSync(f, '# Harness ledger\n\nOne row per lesson. The daily review updates it.\n'));
+  make('wiki', (f) => (existsSync(join(dir, 'starter-wiki')) ? cpSync(join(dir, 'starter-wiki'), f, { recursive: true }) : mkdirSync(f)));
+  make('reports', (f) => mkdirSync(f));
+  make('mc/state', (f) => mkdirSync(f));
+  return made;
+}
+
+function cmdInit(flags) {
+  const made = ensureUserFiles(typeof flags.harness === 'string' ? resolve(flags.harness) : SELF_DIR);
+  console.log(made.length ? `created ${made.join(', ')}` : 'your files are all in place');
+}
+
+/** The starter-side commands live in files that only some checkouts have. */
+async function runStarterCommand(file, name, ctx) {
+  let mod;
+  try {
+    mod = await import(`./${file}`);
+  } catch (e) {
+    if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e;
+    return refuse(`${name} isn't available in this checkout (${file} is missing)`, 2);
+  }
+  process.exitCode = await mod.runCommand(ctx);
+}
+
+function refuse(message, code = 2) {
+  console.error(`cos: ${message}`);
+  process.exitCode = code;
 }
 
 function cmdNew(flags, positional, registryFile) {
@@ -533,20 +695,10 @@ function cmdNew(flags, positional, registryFile) {
     dir: resolve(expandHome(typeof flags.root === 'string' ? flags.root : DEFAULT_ROOT), slug),
     registryFile,
     github: flags.github === true,
-    owner: typeof flags.owner === 'string' ? flags.owner : null,
+    owner: typeof flags.owner === 'string' ? flags.owner : undefined,
   };
-  try {
-    const reason = refuseReason(state, flags.adopt === true);
-    if (reason) {
-      console.error(`cos: ${reason}`);
-      process.exitCode = 2;
-      return;
-    }
-  } catch (e) {
-    console.error(`cos: ${e.message}`);
-    process.exitCode = 1;
-    return;
-  }
+  const reason = refuseReason(state, flags.adopt === true);
+  if (reason) return refuse(reason);
   let failed = false;
   for (const step of NEW_STEPS) {
     if (step.enabled && !step.enabled(state)) continue;
@@ -560,11 +712,40 @@ function cmdNew(flags, positional, registryFile) {
     } catch (e) {
       console.error(`cos: ${e.message}`);
       failed = true;
-      if (step.name !== 'github repo') break;
+      if (step.name !== 'github repo' && step.name !== 'wiki page') break;
     }
   }
   console.log(state.dir);
   if (failed) process.exitCode = 1;
+}
+
+const slugify = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+function cmdAdd(flags, positional, registryFile) {
+  const folder = positional[0];
+  const slug = typeof flags.id === 'string' ? flags.id : folder && slugify(basename(resolve(expandHome(folder))));
+  if (!folder || !slug || !SLUG.test(slug)) {
+    console.error('usage: cos.mjs add <folder> [--id <slug>] [--name "..."] [--what "..."] [--keywords a,b]   (id: lowercase letters, digits, hyphens)');
+    process.exitCode = 2;
+    return;
+  }
+  const dir = canonical(resolve(expandHome(folder)));
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return refuse(`${dir} is not a folder`);
+  const raw = readRegistryRaw(registryFile);
+  if (idTaken(raw, slug)) return refuse(`project id "${slug}" is already registered`);
+  const holder = raw.projects.find((p) => (p.checkouts ?? []).some((c) => canonical(resolve(expandHome(String(c)))) === dir));
+  if (holder) return refuse(`${tilde(dir)} is already registered as "${holder.id}"`);
+
+  const branch = defaultBranchOf(dir);
+  const origin = git(dir, 'remote', 'get-url', 'origin');
+  const repo = origin.ok ? githubRepoOf(origin.out) : null;
+  const keywords = typeof flags.keywords === 'string' ? flags.keywords.split(',').map((k) => k.trim()).filter(Boolean) : [];
+  const name = typeof flags.name === 'string' ? flags.name : titleCase(slug);
+  const what = typeof flags.what === 'string' ? flags.what.trim() : '';
+  appendProject(registryFile, { slug, name, what, dir, keywords, branch: branch ?? 'main' });
+  console.log(`added ${slug} (${name}): ${tilde(dir)}`);
+  console.log(`origin: ${repo ?? 'no GitHub origin found'}; default branch: ${branch ?? 'none found, assumed main'}`);
+  console.log(`Next: fill in "public" for ${slug} in ${tilde(registryFile)}: the branches, remotes and notes (deploy commands, emails) that make it public. The Chief of Staff merges and deploys anything not listed there on its own.`);
 }
 
 function cmdRoute(projects, flags, positional) {
@@ -610,8 +791,31 @@ function main() {
   const { flags, positional } = parsed;
   const registryFile = flags.registry || join(SELF_DIR, 'projects.json');
 
-  if (command === 'new') {
-    cmdNew(flags, positional, registryFile);
+  if (command === 'init') {
+    cmdInit(flags);
+    return;
+  }
+
+  if (command === 'publish-starter' || command === 'update') {
+    const file = command === 'update' ? 'starter-update.mjs' : 'make-starter.mjs';
+    runStarterCommand(file, command, { flags, positional, harness: SELF_DIR }).catch((e) => refuse(e.message, 1));
+    return;
+  }
+
+  if (!flags.registry && command !== 'hook') ensureUserFiles(SELF_DIR);
+
+  const writers = { new: cmdNew, add: cmdAdd };
+  if (writers[command]) {
+    try {
+      writers[command](flags, positional, registryFile);
+    } catch (e) {
+      refuse(e.message, 1);
+    }
+    return;
+  }
+
+  if (command === 'mc') {
+    import('./mc/server.mjs').then((mc) => mc.main(rest));
     return;
   }
 
@@ -624,17 +828,16 @@ function main() {
     return;
   }
 
-  const commands = { status: cmdStatus, route: cmdRoute };
+  const commands = { status: cmdStatus, route: cmdRoute, secrets: cmdSecrets, paused: cmdPaused };
   if (!commands[command]) {
-    console.error('usage: cos.mjs status [--json] [--no-gh] | new <slug> --what "..." | route "<text>" [--json] | hook   (--registry <path>)');
+    console.error('usage: cos.mjs status [--json] [--no-gh] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | route "<text>" [--json] | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | mc [--port 4747] | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run]   (--registry <path>)');
     process.exitCode = 2;
     return;
   }
   try {
-    commands[command](loadRegistry(registryFile), flags, positional);
+    commands[command](loadRegistry(registryFile), flags, positional, registryFile);
   } catch (e) {
-    console.error(`cos: ${e.message}`);
-    process.exitCode = 1;
+    refuse(e.message, 1);
   }
 }
 

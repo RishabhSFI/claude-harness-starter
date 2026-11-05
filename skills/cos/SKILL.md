@@ -1,6 +1,6 @@
 ---
 name: cos
-description: Chief of Staff. One hub chat that reviews every project the owner works on and runs work in them through per-project sessions on pstack. Use for /cos, "chief of staff", "where do my projects stand", "status of everything", "what needs me", "tell <project> to ...", "start a new project", or any request that names one of the owner's projects from the hub session.
+description: Chief of Staff. One hub chat that reviews every project the owner works on and runs work in them through per-project sessions on pstack. Use for /cos, "chief of staff", "where do my projects stand", "status of everything", "what needs me", "tell <project> to ...", "have <project> do ...", "start a new project", or any request that names one of the owner's projects from the hub session.
 ---
 
 # Chief of Staff
@@ -15,22 +15,67 @@ folder. The project list is `H/projects.json`: each project's id, name, what
 it is, its checkouts (folders), the words that point to it, and `public`:
 what makes it publicly visible.
 
+The project wiki, `H/wiki/`, carries facts between chats: one page per
+project (decisions, people, tools, open items), plus people, vendors and
+topics. `skills/wiki/SKILL.md` and `H/wiki/WIKI.md` say how it works.
+
+## A new hub chat each day
+
+The hub chat is daily, so it never grows into a long chat that re-reads
+itself. Each morning the owner starts a new chat with `/cos`. That chat:
+
+1. Reads today's brief, `H/reports/cos-<date>.md` (or the latest one if
+   today's hasn't run), then `H/wiki/index.md` and the pages the brief
+   names.
+2. Works from the brief's handoff: the workers in flight with their
+   session ids, what's waiting on the owner, and the decisions so far.
+3. Finds workers an older hub chat started with
+   `mcp__ccd_session_mgmt__list_sessions` and `list_events`, and in
+   mission control's Work view. Their reports go to the old chat, so check
+   their PRs and transcripts directly instead of waiting for a note.
+
+Before ending a day's last task, put anything the brief can't see (a
+decision, a promise to the owner) on the project's wiki page.
+
+## Never drop a request
+
+Every request the owner makes goes into `H/wiki/topics/owner-requests.md`
+the moment it arrives: their words (short), the project, and where it stands.
+Update its row on every result (working, waiting on owner, done with a link)
+and commit the wiki. Before any status answer, read that page first; it, not
+memory, is the record. A request leaves the "Waiting" and "Working" tables
+only when it's done and verified; a request nobody has started yet sits in "Open". When something waits on the owner for more
+than a day, say so plainly at the top of the next brief.
+
 ## On every /cos (and the first message of a hub session)
 
 1. Run `node H/cos.mjs status`. It reads every checkout and starts with
    **Needs you**, then **Ready for your review** (PRs into a public branch)
    and **Chief of Staff can merge** (PRs into private branches with green
-   checks).
+   checks). Missing required secrets (declared per project in `projects.json`
+   as `secrets`) show up under Needs you; `node H/cos.mjs secrets` lists them
+   all with the command that adds each.
 2. Run `mcp__ccd_session_mgmt__list_sessions`. Each row has a `cwd`: a
    session belongs to the project whose checkout is that folder or a parent
    of it (task worktrees sit in `<checkout>-tasks/` or
    `<checkout>/.claude/worktrees/`). A session whose title is about one
    project but whose `cwd` is another project's folder is misfiled: list it
    under Needs you and offer to move it.
-3. In a chat with the owner (not the scheduled brief, which only reads),
+3. Run `node H/cos.mjs paused --due --json`: chats stopped at a usage limit
+   whose reset has passed. In a chat with the owner, for each entry with a
+   `project` (a worker in one of the owner's projects, whichever hub chat
+   started it) and a `localId`, send it with `SendMessage` (`to`: that id):
+   "Your usage limit has reset. Continue the task you were working on from
+   where you stopped; check your plan and the branch state first." Then run
+   `node H/cos.mjs paused --mark <sessionId> --paused-at <pausedAt>`. List
+   the other entries under Needs you, and the ones you woke under In flight.
+   The scheduled brief only lists them. `scheduled/resume-paused.md` does
+   the same for every chat every 30 minutes once the owner turns that task
+   on.
+4. In a chat with the owner (not the scheduled brief, which only reads),
    merge what you're allowed to (see Releases) before writing the brief, so
    the brief reports it as done.
-4. Reply with the brief, shortest first:
+5. Reply with the brief, shortest first:
    - **Needs you**: only what the owner must decide or look at, one line
      each, with links (preview URL or PR).
    - **Done since last brief**: what you merged or deployed.
@@ -43,13 +88,17 @@ what makes it publicly visible.
 1. Find the project. If the owner named it, use that. Otherwise run
    `node H/cos.mjs route "<their words>"`. If it prints `none`, ask which
    project, listing the names.
-2. Look for a session already in that project (from `list_sessions`,
-   `{"linked": true}` first). If one is idle, send the request to it with
-   `SendMessage` (`to`: its `local_…` id), wrapped in the worker brief below.
+2. A follow-up on a task a worker is still doing, including fixes to the
+   PR it opened, goes to that worker with `SendMessage` (`to`: its `local_…`
+   id). New work gets a fresh session, even when an idle one
+   exists in the project: a long chat re-reads its whole history on every
+   reply, and the wiki page carries what it learned. Message workers only
+   when it changes what they do.
 3. Otherwise start one with `mcp__ccd_session__start_session`:
    - `initiation: "user_asked"`, `context: "fresh"`,
      `permission_mode: "auto"` (the owner wants no stalls),
-     `cwd`: the project's first checkout (or the one the request is about), `use_worktree: true` for anything that changes
+     `cwd`: the project's first checkout (when a project lists more than
+     one, the one the task is about), `use_worktree: true` for anything that changes
      code, `false` for a question or review that only reads,
      `name`: the project id, `wake_when_done: true`.
    - `prompt`: the worker brief below.
@@ -70,11 +119,18 @@ words quoted and what done looks like:
 ```
 /until-ready <the goal in the owner's words>
 
+Read <H>/wiki/projects/<id>.md first: what earlier sessions decided and
+learned about this project. Put anything new you learn in your report.
+
 Work on pstack end to end: load the pstack:poteto-mode skill and follow its
 playbook (design first, delegated build, independent review before the PR).
 Don't stop to ask about routine choices; decide and list your decisions in
 the report. If the project has no .claude/gate.json, draft one from its
 real checks and commit it with the work.
+
+Keep this chat small: delegate building and long reads, don't end a turn
+just to say you're waiting, and stop once the PR is open. Size the review:
+Sonnet for small, low-risk diffs; Opus for large or risky ones.
 
 GitHub: push only to origin and pass `-R <origin owner/repo>` to every gh
 command (some folders have a public `upstream` remote; never use it).
@@ -88,7 +144,14 @@ Report back in this shape: outcome first, PR link, preview link, what the
 checks and the review found, decisions you made, anything left.
 ```
 
-Questions and reviews that change nothing skip the `/until-ready` line.
+When the work is on the harness itself and `git config harness.starterRepo`
+is set there, add this to the brief: "After the PR merges into main, run
+`node cos.mjs publish-starter` from the harness. If the leak scan fails, fix
+the source it names. Never skip the publish or the scan."
+
+Fill in `<H>/wiki/projects/<id>.md` with the real path (`node H/wiki.mjs
+page <id>` prints it). Questions and reviews that change nothing skip the
+`/until-ready` line but keep the wiki line.
 
 ## Releases
 
@@ -107,6 +170,12 @@ The owner allows merges and deploys, except anything publicly visible. The
   review" with the PR and preview link. When the owner says "ship it" (or
   "deploy", "merge it") for that item in this chat, do it, quote their
   words, then check the live result and report.
+- **Harness merges.** When a merge lands in the harness's own main and
+  `git config harness.starterRepo` is set there, run `node H/cos.mjs
+  publish-starter` right after. It builds the public starter from main,
+  scans it for anything personal, and pushes only if the scan is clean. A
+  scan failure means fix the leak it names; never skip the publish or the
+  scan. `--dry-run` shows what would go out.
 - Unsure whether something is public: treat it as public and ask.
 
 ## When a session reports back
@@ -122,22 +191,59 @@ reporting: `gh pr view <n> --json state,baseRefName,statusCheckRollup,url`,
   already decided it in this chat; otherwise ask the owner in one line,
   quoting the worker.
 
+Once you've checked it, update the project's wiki page (Decisions, What's
+built, Open items, `updated`) and append a `## [YYYY-MM-DD] update |
+<project>: <what changed>` entry to `H/wiki/log.md`. Facts you only have
+from the worker's report or this chat get ingested first, so the page can
+cite them (see the wiki skill). Commit the wiki changes in `H`.
+
+`node H/wiki.mjs record <project-id> --pr <owner/repo#n>` keeps each project
+page's Changes list current on every merge (mission control and the daily
+review run it), so write only what a PR can't say: decisions, what's open,
+judgment.
+
 ## New projects
+
+A folder that already exists: `node H/cos.mjs add <folder> --what "<one
+line>" --keywords a,b`. It registers the folder without changing anything in
+it, sets `public` to its default branch, and prints what still needs filling
+in. Ask the owner what else makes it public (deploy commands, emails) and add
+it to `public.notes`.
 
 When the owner wants to start something new:
 
 1. Pick a short slug (lowercase, hyphens) and one line on what it is.
 2. Run `node H/cos.mjs new <slug> --what "<one line>" --github`. It makes
    `~/Projects/<slug>` with git, a CLAUDE.md that sets pstack and
-   `/until-ready` as the way work happens, a private GitHub repo, and adds
-   it to `projects.json`. Commit `projects.json` in `H`. If auto mode
+   `/until-ready` as the way work happens, a private GitHub repo, adds it
+   to `projects.json`, and writes its wiki page,
+   `H/wiki/projects/<slug>.md`, from the template (through `node H/wiki.mjs
+   new-page <slug>`; if that step failed, run it yourself, since the wiki
+   lint fails while a project has no page). Commit `projects.json` and
+   `wiki/` in `H`. If auto mode
    blocks the GitHub step, rerun without `--github`, carry on, and give the
    owner the one command to run themselves: `gh repo create
    <your GitHub name>/<slug> --private --source ~/Projects/<slug> --push`.
+   The GitHub name comes from `--owner`, else from the account `gh` is
+   signed in as.
 3. Start its first worker (as above, `cwd` the new folder) with the
    owner's idea as the goal. The brief also asks it to add the project's
    gate once there is code, and to fill in "What's public" in its CLAUDE.md
    when a deploy exists. Update `public` in `projects.json` to match.
+
+## Mission control
+
+`node H/cos.mjs mc` starts a local page (127.0.0.1:4747) with the same
+status, what every session is doing (its plan step, last action and last
+message, read from its transcript), PR lanes, usage per hour and a task
+queue. The queue is a second way
+to send work: it starts `claude --bg` sessions with this skill's worker
+brief, each in its own worktree (`<checkout>-tasks/mc-<id>`), with no limit
+on how many run at once unless the owner sets one. It keeps its tasks in
+`H/mc/state/queue.json`. Several tasks may work in one project at the same
+time; give any session you start there its own worktree too. Queue sessions show up in `claude agents` named `<project>:
+<title>`; treat their PRs like any worker's (check, then merge or list for
+review).
 
 ## Gates
 
@@ -145,6 +251,13 @@ When the owner wants to start something new:
 shows `gate no` for a project with code, send a worker: "draft
 .claude/gate.json from this project's real checks (tests, lint, build, QA
 script), prove each step passes, commit it on a task branch, open a PR".
+
+## Questions about the past
+
+"What did we decide about X", "who is Y", "what does Z mean": answer from
+the wiki first (`H/wiki/index.md`, then the page, or `node H/wiki.mjs
+search <words>`), citing the page. Only if it doesn't know, look in chats
+or the project, then add what you found to the wiki.
 
 ## Rules
 
@@ -158,6 +271,13 @@ script), prove each step passes, commit it on a task branch, open a PR".
 
 ## Daily brief
 
-If the owner set up a scheduled task that runs `/cos` each morning, it
-writes `H/reports/cos-<date>.md`. If the owner asks "what did I miss", read
-the latest one first.
+The brief lists every request in `wiki/topics/owner-requests.md` not marked
+done, oldest first, with how long each has waited.
+
+The scheduled task "Chief of Staff morning brief" runs on weekdays and
+writes `H/reports/cos-<date>.md`. It's also the handoff to that day's hub
+chat, so besides Needs you it lists every worker in flight with its
+session id, project, PR and next step, and the open decisions. If `H/wiki`
+exists, it also runs `node H/wiki.mjs lint` and lists stale or broken
+pages in one line. If the owner asks "what did I miss", read the latest
+one first.

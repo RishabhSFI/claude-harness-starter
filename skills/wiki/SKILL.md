@@ -38,6 +38,15 @@ A report, a research note, a chat extract, or something the owner told you:
 2. Read it and update every page it touches. Cite it on each page and bump
    `updated`. Add new pages to `index.md`.
 
+## Record a merged PR
+
+`node H/wiki.mjs record <project-id> --pr <owner/repo#n>` files a merged
+PR: its body goes to `raw/` (secrets blanked), and a dated bullet goes under
+`## Changes` at the end of the project's page, with `updated` and `log.md`
+kept in step. Rerunning it changes nothing. Mission control runs it after
+each merge and the daily review catches the rest, so don't write these
+bullets by hand.
+
 ## Update a page
 
 When work is checked and real, update the project page's Decisions, What's

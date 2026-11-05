@@ -27,6 +27,7 @@ in, finds a project's page and searches. It never writes pages; you do.
 ```
 node wiki.mjs lint
 node wiki.mjs ingest <file> --title "<title>" --origin "<where it came from>"
+node wiki.mjs record <project-id> --pr <owner/repo#n>
 node wiki.mjs page <project-id>
 node wiki.mjs search <words>
 ```
@@ -84,6 +85,13 @@ than leave one out.
    the owner's review.
 8. **Links.** Repos, live URLs, folders, related pages.
 
+A project page may end with a ninth section, **Changes**, which only
+`wiki.mjs record` writes: one line per merged PR, in date order,
+`- 2026-01-31: <PR title> ([owner/repo#n](url)) ([[raw/<file>|raw]])`. The
+raw file is the PR's body, named `<merge date>-pr-<owner>-<repo>-<n>`.
+`updated` moves to the merge date if that is newer. Don't edit these lines;
+add decisions and open items in their own sections.
+
 `projects/_template.md` has the empty shape. Files starting with `_` are
 templates and the lint skips them.
 
@@ -109,6 +117,13 @@ after that. A newer version is a new source.
 3. Cite the source on each page you changed, and bump `updated`.
 4. Add new pages to `index.md`.
 5. Run the lint.
+
+### Record (a merged PR)
+
+`node wiki.mjs record <project-id> --pr <owner/repo#n>` does the
+mechanical part of an update for one merged PR: raw source, Changes line,
+`updated`, and a `log.md` entry. It refuses a PR that isn't merged or whose
+repo isn't in the project's `repos`, and a rerun changes nothing.
 
 ### Update (after work happens)
 

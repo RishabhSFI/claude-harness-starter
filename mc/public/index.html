@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Mission control</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" aria-label="Views">
+    <div class="mark" aria-hidden="true">MC</div>
+    <ul id="nav" class="nav"></ul>
+  </nav>
+
+  <div class="main">
+    <header class="topbar">
+      <h1 id="view-title">Overview</h1>
+      <div class="topbar-right">
+        <span id="conn" class="conn" data-state="connecting">Connecting</span>
+        <span id="refreshed" class="muted num">No data yet</span>
+        <button id="refresh" type="button" class="btn ghost">Refresh</button>
+      </div>
+    </header>
+
+    <p id="banner" class="banner" role="status" hidden></p>
+
+    <section class="view" data-view="overview" aria-labelledby="view-title">
+      <div id="kpis" class="kpis"></div>
+      <div class="overview-grid">
+        <section class="panel" aria-labelledby="active-h">
+          <div class="panel-head">
+            <h2 id="active-h">Active work</h2>
+            <a class="link" href="#work">All sessions</a>
+          </div>
+          <div id="active" class="active-list"></div>
+        </section>
+        <div class="stack">
+          <section class="panel" aria-labelledby="needs-h">
+            <div class="panel-head"><h2 id="needs-h">Needs you</h2><span id="needs-count" class="count num"></span></div>
+            <ul id="needs" class="rows"></ul>
+          </section>
+          <section class="panel" aria-labelledby="feed-h">
+            <div class="panel-head"><h2 id="feed-h">Activity</h2></div>
+            <ol id="feed" class="feed" aria-live="polite" aria-relevant="additions"></ol>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" data-view="work" aria-labelledby="view-title" hidden>
+      <div id="work-filter" class="segmented" role="group" aria-label="Filter by project"></div>
+      <div id="work" class="work-list"></div>
+    </section>
+
+    <section class="view" data-view="prs" aria-labelledby="view-title" hidden>
+      <div id="lanes" class="lanes"></div>
+    </section>
+
+    <section class="view" data-view="queue" aria-labelledby="view-title" hidden>
+      <p id="queue-lead" class="lead"></p>
+      <div class="queue-grid">
+        <section class="panel" aria-labelledby="add-h">
+          <div class="panel-head"><h2 id="add-h">Add a task</h2></div>
+          <form id="add" class="add" autocomplete="off">
+            <div class="field-row">
+              <label>Project<select name="project" id="add-project" required></select></label>
+              <label>Priority
+                <select name="priority">
+                  <option value="1">1, urgent</option>
+                  <option value="2" selected>2, normal</option>
+                  <option value="3">3, whenever</option>
+                </select>
+              </label>
+            </div>
+            <label>Title<input name="title" maxlength="120" required placeholder="Fix the login redirect"></label>
+            <label>What should it do?<textarea name="prompt" rows="4" required placeholder="Your words. The worker gets them as written."></textarea></label>
+            <div class="field-row foot">
+              <label class="check"><input type="checkbox" name="risky"> Risky: wait for my OK before starting</label>
+              <button type="submit" class="btn primary">Add to queue</button>
+            </div>
+            <p id="add-error" class="error" role="alert" hidden></p>
+          </form>
+        </section>
+        <div class="stack">
+          <section class="panel" aria-labelledby="waiting-h">
+            <div class="panel-head"><h2 id="waiting-h">Waiting</h2><span id="waiting-count" class="count num"></span></div>
+            <ol id="queue" class="rows"></ol>
+          </section>
+          <section class="panel" aria-labelledby="started-h">
+            <div class="panel-head"><h2 id="started-h">Started</h2></div>
+            <ul id="started" class="rows"></ul>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" data-view="usage" aria-labelledby="view-title" hidden>
+      <div id="usage-kpis" class="kpis three"></div>
+      <section class="panel" aria-labelledby="chart-h">
+        <div class="panel-head">
+          <h2 id="chart-h">Weighted tokens per hour, last 24 hours</h2>
+          <span id="chart-readout" class="muted num" aria-live="polite"></span>
+        </div>
+        <div id="chart" class="chart" tabindex="0" role="group" aria-label="Weighted tokens per hour. Use the arrow keys to read each hour."></div>
+        <p class="note">Weighted tokens count input once, cache writes 1.25 times, cache reads a tenth and output 5 times, the way the plan's price works. Helpers count toward the session that started them.</p>
+      </section>
+      <section class="panel" aria-labelledby="top-h">
+        <div class="panel-head"><h2 id="top-h">Top sessions, last 24 hours</h2></div>
+        <ol id="top" class="ranked"></ol>
+      </section>
+    </section>
+
+    <section class="view" data-view="settings" aria-labelledby="view-title" hidden>
+      <div class="settings-grid">
+        <section class="panel" aria-labelledby="limit-h">
+          <div class="panel-head"><h2 id="limit-h">How many run at once</h2></div>
+          <p id="limit-now" class="muted"></p>
+          <form id="limit" class="limit">
+            <label class="check"><input type="checkbox" id="limit-on"> Limit how many run at once</label>
+            <label class="inline">At most <input id="limit-n" type="number" min="1" step="1" value="3" inputmode="numeric"> at a time</label>
+            <button type="submit" class="btn">Save</button>
+          </form>
+        </section>
+        <section class="panel" aria-labelledby="pause-h">
+          <div class="panel-head"><h2 id="pause-h">Starting tasks</h2></div>
+          <p id="pause-now" class="muted"></p>
+          <button id="pause" type="button" class="btn" aria-pressed="false">Pause starts</button>
+        </section>
+        <section class="panel" aria-labelledby="where-h">
+          <div class="panel-head"><h2 id="where-h">Where things live</h2></div>
+          <dl id="where" class="where"></dl>
+          <p id="leftover" class="note"></p>
+        </section>
+        <section class="panel" aria-labelledby="review-h">
+          <div class="panel-head"><h2 id="review-h">From the daily review</h2></div>
+          <p id="review-meta" class="muted"></p>
+          <ul id="review-items" class="rows"></ul>
+        </section>
+      </div>
+    </section>
+  </div>
+</div>
+
+<dialog id="confirm" aria-labelledby="confirm-title">
+  <form method="dialog">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-body"></p>
+    <label id="confirm-typed" hidden><span>Type <code id="confirm-phrase"></code> to confirm</span>
+      <input id="confirm-input" autocomplete="off" spellcheck="false">
+    </label>
+    <div class="dialog-actions">
+      <button value="cancel" class="btn ghost">Go back</button>
+      <button value="ok" id="confirm-ok" class="btn danger">Confirm</button>
+    </div>
+  </form>
+</dialog>
+</body>
+</html>

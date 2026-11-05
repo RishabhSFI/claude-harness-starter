@@ -1,6 +1,7 @@
 #!/bin/sh
-# Links the cos skill and global CLAUDE.md into ~/.claude and registers the
-# UserPromptSubmit hook. Safe to rerun. Pass --dry-run to only print actions.
+# Links the cos, wiki and until-ready skills and global CLAUDE.md into ~/.claude and
+# registers the hooks: the wrong-folder warning (UserPromptSubmit) and the
+# until-ready gate (Stop). Safe to rerun. Pass --dry-run to only print actions.
 set -eu
 
 DRY=0
@@ -52,9 +53,10 @@ link() {
 }
 
 link "$HARNESS/skills/cos" "$CLAUDE_DIR/skills/cos" refuse
-link "$HARNESS/skills/until-ready" "$CLAUDE_DIR/skills/until-ready" refuse
 link "$HARNESS/skills/wiki" "$CLAUDE_DIR/skills/wiki" refuse
+link "$HARNESS/skills/until-ready" "$CLAUDE_DIR/skills/until-ready" refuse
 link "$HARNESS/global/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" warn
+link "$HARNESS/global/pstack-models.md" "$CLAUDE_DIR/pstack-models.md" warn
 
 # Keep settings.json as it was before the first install, once. Later runs
 # never overwrite that copy.
@@ -63,59 +65,51 @@ if [ "$DRY" -eq 0 ] && [ -f "$CLAUDE_DIR/settings.json" ] && [ ! -e "$BACKUP" ];
   cp "$CLAUDE_DIR/settings.json" "$BACKUP"
 fi
 
+# Your own files (projects.json, wiki/, ledger.md, reports/) are made when missing.
+if [ "$DRY" -eq 1 ]; then
+  say "would create any of projects.json, ledger.md, wiki/, reports/ and mc/state/ that are missing"
+else
+  node "$HERE/cos.mjs" init --harness "$HARNESS" || STATUS=1
+fi
+
 node - "$HARNESS" "$CLAUDE_DIR/settings.json" "$DRY" <<'EOF' || STATUS=1
 const fs = require('node:fs');
 const path = require('node:path');
 const [harness, file, dry] = process.argv.slice(2);
-const command = `node "${harness}/cos.mjs" hook`;
+
+// One row per hook. `ours` recognises an older copy of the same hook (another
+// folder) so a rerun replaces it instead of adding a second one.
+const HOOKS = [
+  { event: 'UserPromptSubmit', command: `node "${harness}/cos.mjs" hook`, timeout: 5, ours: /cos\.mjs"? hook$/ },
+  { event: 'Stop', command: `node "${harness}/gate/qa-gate.mjs"`, timeout: 1800, ours: /gate\/qa-gate\.mjs"?$/ },
+];
 
 const exists = fs.existsSync(file);
 const settings = exists ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
-const groups = ((settings.hooks ??= {}).UserPromptSubmit ??= []);
-const isCos = (h) => /cos\.mjs"? hook$/.test(h.command ?? '');
-const present = groups.some((g) => (g.hooks ?? []).some((h) => h.command === command));
-const stale = groups.some((g) => (g.hooks ?? []).some((h) => isCos(h) && h.command !== command));
+settings.hooks ??= {};
+const todo = HOOKS.filter((h) => {
+  const groups = settings.hooks[h.event] ?? [];
+  const all = groups.flatMap((g) => g.hooks ?? []);
+  const current = all.some((x) => x.command === h.command) && !all.some((x) => h.ours.test(x.command ?? '') && x.command !== h.command);
+  if (current) console.log(`already hook ${h.command} in ${file}`);
+  return !current;
+});
 
-if (present && !stale) {
-  console.log(`already hook in ${file}`);
+if (!todo.length) {
+  // nothing to write
 } else if (dry === '1') {
-  console.log(`[dry-run] added hook ${command} to ${file}`);
+  for (const h of todo) console.log(`[dry-run] added hook ${h.command} to ${file}`);
 } else {
-  for (const g of groups) g.hooks = (g.hooks ?? []).filter((h) => !isCos(h));
-  settings.hooks.UserPromptSubmit = groups.filter((g) => g.hooks.length);
-  settings.hooks.UserPromptSubmit.push({ hooks: [{ type: 'command', command, timeout: 5 }] });
+  if (exists) fs.copyFileSync(file, `${file}.bak`);
+  for (const h of todo) {
+    const groups = settings.hooks[h.event] ?? [];
+    for (const g of groups) g.hooks = (g.hooks ?? []).filter((x) => !h.ours.test(x.command ?? ''));
+    settings.hooks[h.event] = groups.filter((g) => g.hooks.length);
+    settings.hooks[h.event].push({ hooks: [{ type: 'command', command: h.command, timeout: h.timeout }] });
+    console.log(`added hook ${h.command} to ${file}`);
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
-  console.log(`added hook ${command} to ${file}`);
-}
-EOF
-
-# The gate's Stop hook. It does nothing unless /until-ready turned a gate on
-# for that session.
-node - "$HARNESS" "$CLAUDE_DIR/settings.json" "$DRY" <<'EOF' || STATUS=1
-const fs = require('node:fs');
-const path = require('node:path');
-const [harness, file, dry] = process.argv.slice(2);
-const command = `node "${harness}/gate/qa-gate.mjs"`;
-
-const exists = fs.existsSync(file);
-const settings = exists ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
-const groups = ((settings.hooks ??= {}).Stop ??= []);
-const isGate = (h) => /qa-gate\.mjs"?$/.test(h.command ?? '');
-const present = groups.some((g) => (g.hooks ?? []).some((h) => h.command === command));
-const stale = groups.some((g) => (g.hooks ?? []).some((h) => isGate(h) && h.command !== command));
-
-if (present && !stale) {
-  console.log(`already gate hook in ${file}`);
-} else if (dry === '1') {
-  console.log(`[dry-run] added gate hook ${command} to ${file}`);
-} else {
-  for (const g of groups) g.hooks = (g.hooks ?? []).filter((h) => !isGate(h));
-  settings.hooks.Stop = groups.filter((g) => g.hooks.length);
-  settings.hooks.Stop.push({ hooks: [{ type: 'command', command, timeout: 1800 }] });
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
-  console.log(`added gate hook ${command} to ${file}`);
 }
 EOF
 

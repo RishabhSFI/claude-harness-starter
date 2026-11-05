@@ -7,6 +7,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, write
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findGh } from './cos.mjs';
 
 const SELF_DIR = dirname(fileURLToPath(import.meta.url));
 const STALE_DAYS = 14;
@@ -15,13 +16,13 @@ const SPECIAL = new Set(['WIKI.md', 'index.md', 'log.md', 'README.md']);
 const PAGE_DIRS = ['projects', 'people', 'vendors', 'topics'];
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const LOG_HEADING = /^## \[\d{4}-\d{2}-\d{2}\] [a-z]+ \| \S/;
-const VALUE_FLAGS = new Set(['wiki', 'registry', 'title', 'origin', 'date']);
+const VALUE_FLAGS = new Set(['wiki', 'registry', 'title', 'origin', 'date', 'pr']);
 const PROJECT_ID = /^[a-z0-9-]+$/;
 
 /**
  * @typedef {'special' | 'page' | 'raw' | 'template'} Kind
  * @typedef {{rel: string, kind: Kind, meta: Record<string, string | string[]> | null, text: string, links: string[]}} Page
- * @typedef {{id: string, name: string, what: string, checkouts: string[]}} Project
+ * @typedef {{id: string, name: string, what: string, checkouts: string[], repos: string[]}} Project
  * @typedef {{wikiDir: string, pages: Page[], files: Set<string>, projects: Project[], lastCommit: (p: Project) => Date | null, today: Date}} Wiki
  * @typedef {{file: string, detail: string}} Finding
  */
@@ -119,6 +120,7 @@ function loadProjects(registry) {
     name: String(p.name ?? p.id),
     what: String(p.what ?? ''),
     checkouts: (Array.isArray(p.checkouts) ? p.checkouts : []).map((c) => resolve(expandHome(String(c)))),
+    repos: (Array.isArray(p.repos) ? p.repos : []).map(String),
   }));
 }
 
@@ -342,16 +344,12 @@ function ensureLog(wikiDir) {
 const RAW_MARK = '\n> Raw source';
 const rawBody = (doc) => doc.slice(doc.indexOf(RAW_MARK));
 
-function cmdIngest(wikiDir, flags, positional) {
-  const src = positional[0];
-  if (!src) throw new UsageError('ingest needs a file');
-  requireWiki(wikiDir);
-  const body = redact(readFileSync(src, 'utf8'));
-  const title = oneLine(flags.title ?? body.match(/^#\s+(.+)$/m)?.[1] ?? basename(src, extname(src))) || 'Source';
-  const date = flags.date ?? localDate();
-  if (!parseDate(date)) throw new UsageError('--date must be YYYY-MM-DD');
-  const origin = oneLine(flags.origin ?? tilde(resolve(src)));
-  const slug = slugify(title);
+/**
+ * Writes `raw/<date>-<slug>.md` from an already-redacted body. A rerun with the same text is a no-op;
+ * the same name with different text is a conflict, since raw sources never change.
+ * @returns {{status: 'created' | 'same' | 'conflict', path: string, name: string}}
+ */
+function writeRaw(wikiDir, { body, title, origin, date, slug }) {
   const name = `${date}-${slug}.md`;
   const rawDir = join(wikiDir, 'raw');
   const dest = join(rawDir, name);
@@ -370,18 +368,155 @@ function cmdIngest(wikiDir, flags, positional) {
   ].join('\n');
   const sameSlug = existsSync(rawDir) ? readdirSync(rawDir).filter((f) => f.endsWith(`-${slug}.md`) && DATE.test(f.slice(0, 10))) : [];
   const twin = sameSlug.find((f) => rawBody(readFileSync(join(rawDir, f), 'utf8')) === rawBody(doc));
-  if (twin) {
-    console.log(`already ingested: ${join(rawDir, twin)}`);
-    return 0;
-  }
-  if (existsSync(dest)) {
-    console.error(`${dest} already exists with different text. Raw sources don't change; ingest it under a new --title.`);
-    return 1;
-  }
+  if (twin) return { status: 'same', path: join(rawDir, twin), name: twin };
+  if (existsSync(dest)) return { status: 'conflict', path: dest, name };
   mkdirSync(dirname(dest), { recursive: true });
   writeFileSync(dest, doc);
-  appendFileSync(ensureLog(wikiDir), `\n## [${localDate()}] ingest | ${title}\n\nRaw source [[raw/${stripMd(name)}]], from ${origin}.\n`);
-  console.log(dest);
+  return { status: 'created', path: dest, name };
+}
+
+function cmdIngest(wikiDir, flags, positional) {
+  const src = positional[0];
+  if (!src) throw new UsageError('ingest needs a file');
+  requireWiki(wikiDir);
+  const body = redact(readFileSync(src, 'utf8'));
+  const title = oneLine(flags.title ?? body.match(/^#\s+(.+)$/m)?.[1] ?? basename(src, extname(src))) || 'Source';
+  const date = flags.date ?? localDate();
+  if (!parseDate(date)) throw new UsageError('--date must be YYYY-MM-DD');
+  const origin = oneLine(flags.origin ?? tilde(resolve(src)));
+  const raw = writeRaw(wikiDir, { body, title, origin, date, slug: slugify(title) });
+  if (raw.status === 'same') {
+    console.log(`already ingested: ${raw.path}`);
+    return 0;
+  }
+  if (raw.status === 'conflict') {
+    console.error(`${raw.path} already exists with different text. Raw sources don't change; ingest it under a new --title.`);
+    return 1;
+  }
+  appendFileSync(ensureLog(wikiDir), `\n## [${localDate()}] ingest | ${title}\n\nRaw source [[raw/${stripMd(raw.name)}]], from ${origin}.\n`);
+  console.log(raw.path);
+  return 0;
+}
+
+/** @typedef {{repo: string, number: number, title: string, body: string, baseRefName: string, mergedAt: string | null, url: string}} PrRecord */
+
+const PR_REF = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)$/;
+
+/** @returns {PrRecord} gh's `pr view` JSON, checked field by field. */
+function parsePrRecord(repo, number, json) {
+  let raw;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    throw new Error(`gh pr view ${repo}#${number} returned unparseable output`);
+  }
+  const text = (v) => (typeof v === 'string' ? v : '');
+  const mergedAt = typeof raw?.mergedAt === 'string' && !Number.isNaN(Date.parse(raw.mergedAt)) ? raw.mergedAt : null;
+  return { repo, number, title: text(raw?.title), body: text(raw?.body), baseRefName: text(raw?.baseRefName), mergedAt, url: text(raw?.url) };
+}
+
+function fetchPr(repo, number) {
+  const r = spawnSync(findGh(), ['pr', 'view', String(number), '-R', repo, '--json', 'title,body,baseRefName,mergedAt,url'], {
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  if (r.error || r.status !== 0) throw new Error(`gh pr view ${repo}#${number} failed: ${(r.error?.message || r.stderr || '').trim().split('\n')[0]}`);
+  return parsePrRecord(repo, number, r.stdout);
+}
+
+/** Sets `updated` inside the frontmatter block only, adding the key when the block lacks it. */
+function bumpUpdated(pageText, date) {
+  const m = pageText.match(/^---\r?\n([\s\S]*?)\r?\n---(?=\r?\n|$)/);
+  if (!m) return pageText;
+  const block = /^updated:.*$/m.test(m[1]) ? m[1].replace(/^updated:.*$/m, `updated: ${date}`) : `${m[1]}\nupdated: ${date}`;
+  return `---\n${block}\n---${pageText.slice(m[0].length)}`;
+}
+
+/** Puts `bullet` after the last `## Changes` bullet dated on or before its own date; makes the section at the page's end if absent. */
+function addChange(pageText, date, bullet) {
+  const lines = pageText.replace(/\n+$/, '').split('\n');
+  const head = lines.indexOf('## Changes');
+  if (head < 0) return `${lines.join('\n')}\n\n## Changes\n\n${bullet}\n`;
+  let end = lines.findIndex((l, i) => i > head && l.startsWith('## '));
+  if (end < 0) end = lines.length;
+  const dated = [];
+  for (let i = head + 1; i < end; i++) {
+    const d = lines[i].match(/^- (\d{4}-\d{2}-\d{2}):/)?.[1];
+    if (d) dated.push({ i, d });
+  }
+  const afterBullet = (i) => {
+    let j = i + 1;
+    while (j < end && /^\s+\S/.test(lines[j])) j++;
+    return j;
+  };
+  if (!dated.length) lines.splice(head + 1, 0, '', bullet);
+  else {
+    const prior = dated.filter((x) => x.d <= date).at(-1);
+    lines.splice(prior ? afterBullet(prior.i) : dated[0].i, 0, bullet);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * A merged PR as a raw source plus one dated bullet under the project page's `## Changes`.
+ * The PR's URL on the page is the idempotency key: once it is there, nothing is touched.
+ */
+function cmdRecord(wikiDir, registry, flags, positional) {
+  const id = projectId(positional, 'record');
+  const ref = PR_REF.exec(flags.pr ?? '');
+  if (!ref) throw new UsageError('record needs --pr <owner/repo#number>');
+  const [, repo, n] = ref;
+  const number = Number(n);
+  requireWiki(wikiDir);
+  const project = loadProjects(registry).find((p) => p.id === id);
+  if (!project) throw new UsageError(`project "${id}" is not in ${tilde(registry)}`);
+  if (!project.repos.some((r) => r.toLowerCase() === repo.toLowerCase())) {
+    console.error(`${repo} is not one of ${id}'s repos in ${tilde(registry)}`);
+    return 1;
+  }
+  const pageFile = join(wikiDir, 'projects', `${id}.md`);
+  if (!existsSync(pageFile)) {
+    console.error(`no page for "${id}" yet; run: node wiki.mjs new-page ${id}`);
+    return 1;
+  }
+  const pr = fetchPr(repo, number);
+  if (!pr.url) {
+    console.error(`gh returned no url for ${repo}#${number}; refusing to record without the idempotency key`);
+    return 1;
+  }
+  if (!pr.mergedAt) {
+    console.error(`${repo}#${number} is not merged; nothing recorded`);
+    return 1;
+  }
+  const pageText = readFileSync(pageFile, 'utf8');
+  if (pr.url && pageText.includes(`](${pr.url})`)) {
+    console.log(`already recorded: ${repo}#${number}`);
+    return 0;
+  }
+  const mergedOn = localDate(new Date(pr.mergedAt));
+  const title = oneLine(pr.title).replace(/\[\[/g, '[ [') || `${repo}#${number}`;
+  const raw = writeRaw(wikiDir, {
+    body: redact(`# ${title}\n\n${pr.body}`),
+    title: `${repo}#${number}: ${title}`,
+    origin: `GitHub pull request ${repo}#${number}${pr.url ? ` (${pr.url})` : ''}, merged into ${oneLine(pr.baseRefName) || 'its base branch'}`,
+    date: mergedOn,
+    slug: slugify(`pr-${repo}-${number}`),
+  });
+  if (raw.status === 'conflict') {
+    console.error(`${raw.path} already exists with different text. Raw sources don't change.`);
+    return 1;
+  }
+  const stem = stripMd(raw.name);
+  const link = pr.url ? `[${repo}#${number}](${pr.url})` : `${repo}#${number}`;
+  const bullet = `- ${mergedOn}: ${title} (${link}) ([[raw/${stem}|raw]])`;
+  const log = ensureLog(wikiDir);
+  if (!readFileSync(log, 'utf8').includes(`[[raw/${stem}]]`)) {
+    appendFileSync(log, `\n## [${localDate()}] update | ${id}: ${title}\n\nRecorded merged PR ${link}, with raw source [[raw/${stem}]].\n`);
+  }
+  const updated = parseFrontmatter(pageText)?.updated;
+  const bumped = updated && updated >= mergedOn ? pageText : bumpUpdated(pageText, mergedOn);
+  writeFileSync(pageFile, addChange(bumped, mergedOn, bullet));
+  console.log(`recorded: ${repo}#${number} on projects/${id}.md`);
   return 0;
 }
 
@@ -516,6 +651,7 @@ const USAGE = `usage: node wiki.mjs <command> [--wiki <dir>] [--registry <projec
   lint                                        check links, index, frontmatter, stale pages
   ingest <file> [--title t] [--origin o] [--date YYYY-MM-DD]
                                               copy a source into raw/ and log it
+  record <project-id> --pr <owner/repo#n>     add a merged PR to the project page's Changes list
   page <project-id>                           print the project's page path
   new-page <project-id>                       write a project's page from projects/_template.md
   search <words>                              ranked search over the wiki`;
@@ -529,6 +665,7 @@ function main() {
     switch (command) {
       case 'lint': return cmdLint(loadWiki(wikiDir, registry));
       case 'ingest': return cmdIngest(wikiDir, flags, positional);
+      case 'record': return cmdRecord(wikiDir, registry, flags, positional);
       case 'page': return cmdPage(wikiDir, positional);
       case 'new-page': return cmdNewPage(wikiDir, registry, positional);
       case 'search': return cmdSearch(loadWiki(wikiDir, registry), positional);
