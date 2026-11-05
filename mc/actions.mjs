@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
-import { classifyPr, describePublic, githubRepoOf } from '../cos.mjs';
+import { classifyPr, describePublic, githubRepoOf, prBlockReason } from '../cos.mjs';
 import { clean } from './activity.mjs';
 import { isLimitMessage, sameSession } from './queue.mjs';
 
@@ -250,6 +250,7 @@ export function checkState(checks = []) {
  * The merge policy, run on the PR as GitHub has it right now. One click only for mergeable-by-cos with a declared
  * `public` list. Otherwise the owner confirms `<repo>#<n>`: by the dialog's second click for a green live merge,
  * typed when nothing is declared public, and typed again as `override` for a live merge whose checks aren't green.
+ * A blocked PR (draft, conflicts, requested changes) is refused whatever confirm and override say.
  * A refusal the owner can confirm past carries `needs`, so the page asks for exactly what the server will accept.
  * @param {{pr: ReturnType<typeof parseFreshPr> | null, project: object | undefined, defaultBranch: string | null, repo: string, number: number, confirm?: string, override?: string}} input
  * @returns {{allow: boolean, reason?: string, needs?: {phrase: string, typed: boolean, override: boolean, live: boolean, base: string | null, checks: string}}}
@@ -259,6 +260,7 @@ export function mergeDecision({ pr, project, defaultBranch, repo, number, confir
   if (!pr) return { allow: false, reason: `Couldn't read ${repo}#${number} from GitHub. Try again.` };
   if (pr.state !== 'OPEN') return { allow: false, reason: `${repo}#${number} is ${String(pr.state ?? 'not open').toLowerCase()}, not open.` };
   if (!pr.head) return { allow: false, reason: `GitHub didn't say which commit ${repo}#${number} is at. Try again.` };
+  if (!pr.base) return { allow: false, reason: `GitHub didn't say which branch ${repo}#${number} lands in. Try again.` };
   const kind = classifyPr(pr, project.public, defaultBranch);
   const phrase = `${repo}#${number}`;
   const checks = checkState(pr.checks);
@@ -276,7 +278,7 @@ export function mergeDecision({ pr, project, defaultBranch, repo, number, confir
     if (confirm === phrase) return { allow: true };
     return { allow: false, reason: `This lands in a public branch (${pr.base ?? 'unknown base'}). Confirm the live merge in the dialog.`, needs: needs({ live: true }) };
   }
-  return { allow: false, reason: 'Not mergeable yet: a check is failing or pending, it is a draft, or it has conflicts or requested changes.' };
+  return { allow: false, reason: `Not mergeable yet. ${prBlockReason(pr, project.public, defaultBranch)}` };
 }
 
 /**

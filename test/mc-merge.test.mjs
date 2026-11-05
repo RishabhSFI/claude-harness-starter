@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { after, test } from 'node:test';
+import { after, describe, test } from 'node:test';
 
-const { mergePr } = await import('../mc/actions.mjs');
+const { mergePr, mergeDecision, parseFreshPr } = await import('../mc/actions.mjs');
 
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'mc-merge-')));
 after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -55,4 +55,38 @@ test('the wiki record gets the same --registry the server reads', async () => {
   assert.deepEqual(await mergePr(ctx, args()), { ok: true });
   for (let i = 0; i < 50 && !existsSync(argv); i++) await new Promise((r) => setTimeout(r, 100));
   assert.deepEqual(JSON.parse(readFileSync(argv, 'utf8')), ['record', 'alpha', '--pr', 'acme/alpha#5', '--registry', join(tmp, 'other-projects.json')]);
+});
+
+describe('live PRs that are blocked', () => {
+  const project = { id: 'alpha', public: { branches: ['main'], remotes: [], notes: [] }, repos: ['acme/alpha'] };
+  const fresh = (over) => parseFreshPr({ state: 'OPEN', headRefOid: 'abc123', baseRefName: 'main', isDraft: false, statusCheckRollup: [{ conclusion: 'SUCCESS' }], mergeable: 'MERGEABLE', reviewDecision: null, ...over });
+  const decide = (pr, extra = {}) => mergeDecision({ pr, project, defaultBranch: 'main', repo: 'acme/alpha', number: 5, confirm: 'acme/alpha#5', override: 'acme/alpha#5', ...extra });
+
+  const cases = [
+    ['a draft', { isDraft: true }, /draft/],
+    ['merge conflicts', { mergeable: 'CONFLICTING' }, /conflicts/],
+    ['requested changes', { reviewDecision: 'CHANGES_REQUESTED' }, /asked for changes/],
+  ];
+  for (const [name, over, why] of cases) {
+    test(`${name} is refused even with confirm and override typed`, () => {
+      const d = decide(fresh(over));
+      assert.equal(d.allow, false);
+      assert.match(d.reason, why);
+      assert.equal(d.needs, undefined, 'nothing the owner can type gets past it');
+    });
+  }
+
+  test('failing checks on a live PR are still mergeable with both typed', () => {
+    const pr = fresh({ statusCheckRollup: [{ conclusion: 'FAILURE' }] });
+    assert.equal(decide(pr).allow, true);
+    assert.equal(decide(pr, { override: undefined }).allow, false);
+  });
+});
+
+test('a PR whose target branch GitHub did not report is refused even with confirm and override typed', () => {
+  const project = { id: 'alpha', repos: ['acme/alpha'], public: { branches: ['main'] } };
+  const pr = parseFreshPr({ state: 'OPEN', headRefOid: 'abc', baseRefName: null, isDraft: false, mergeable: 'MERGEABLE', reviewDecision: null, statusCheckRollup: [{ conclusion: 'SUCCESS' }] });
+  const d = mergeDecision({ pr, project, defaultBranch: 'main', repo: 'acme/alpha', number: 5, confirm: 'acme/alpha#5', override: 'acme/alpha#5' });
+  assert.equal(d.allow, false);
+  assert.match(d.reason, /which branch/);
 });

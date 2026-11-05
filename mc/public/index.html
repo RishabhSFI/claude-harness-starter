@@ -28,6 +28,14 @@
     <p id="banner" class="banner" role="status" hidden></p>
 
     <section class="view" data-view="overview" aria-labelledby="view-title">
+      <div id="answers" class="answers"></div>
+      <section id="qa-panel" class="panel" aria-labelledby="qa-h" hidden>
+        <div class="panel-head">
+          <h2 id="qa-h">Ready for you to QA</h2>
+          <a class="link" href="#qa">See all</a>
+        </div>
+        <div id="qa-mini" class="qa-mini"></div>
+      </section>
       <div id="kpis" class="kpis"></div>
       <div class="overview-grid">
         <section class="panel" aria-labelledby="active-h">
@@ -48,6 +56,27 @@
           </section>
         </div>
       </div>
+    </section>
+
+    <section class="view" data-view="qa" aria-labelledby="view-title" hidden>
+      <p id="qa-lead" class="lead"></p>
+      <div id="qa-list" class="qa-list"></div>
+    </section>
+
+    <section class="view" data-view="map" aria-labelledby="view-title" hidden>
+      <section class="panel">
+        <details id="legend-box" class="legend-box">
+          <summary><h2>What each state means</h2></summary>
+          <ul id="map-legend" class="rows legend"></ul>
+        </details>
+      </section>
+      <div id="map-filter" class="segmented" role="group" aria-label="Filter by state"></div>
+      <div id="map-rows" class="work-list"></div>
+      <section class="panel" aria-labelledby="other-h">
+        <div class="panel-head"><h2 id="other-h">Other sessions</h2><span id="other-count" class="count num"></span></div>
+        <p class="note-top">Sessions that match no request. Link one to a request if it belongs to it.</p>
+        <ul id="map-other" class="rows"></ul>
+      </section>
     </section>
 
     <section class="view" data-view="work" aria-labelledby="view-title" hidden>

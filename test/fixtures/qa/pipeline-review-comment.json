@@ -1,0 +1,66 @@
+{
+  "baseRefName": "develop",
+  "body": "Trims stale postings from the shortlist.\n\n## Test plan\n\n- [ ] Open the shortlist and check a held posting is still there\n- [x] Run the dry run and read the counts\n",
+  "comments": [
+    {
+      "id": "IC_kwDOExample01AAAABi-qEQg",
+      "author": {
+        "login": "example-owner"
+      },
+      "authorAssociation": "OWNER",
+      "body": "Re-review of the fixes: all five hold. 449 tests pass. Known low risks left as they are.",
+      "createdAt": "2026-11-05T02:10:00Z",
+      "url": "https://github.com/example-owner/pipeline/pull/7#issuecomment-6650000001"
+    },
+    {
+      "id": "IC_kwDOExample02AAAABi-qEQh",
+      "author": {
+        "login": "example-owner"
+      },
+      "authorAssociation": "OWNER",
+      "body": "## Independent review\n\nNo blocking findings. Two lows noted.",
+      "createdAt": "2026-11-05T02:20:00Z",
+      "url": "https://github.com/example-owner/pipeline/pull/7#issuecomment-6650000002"
+    }
+  ],
+  "createdAt": "2026-11-05T01:00:00Z",
+  "headRefName": "claude/trim-lists",
+  "headRefOid": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+  "isDraft": false,
+  "labels": [
+    {
+      "id": "LA_1",
+      "name": "waiting-on-owner",
+      "color": "ededed",
+      "description": ""
+    }
+  ],
+  "mergeable": "MERGEABLE",
+  "number": 7,
+  "reviewDecision": "",
+  "reviews": [
+    {
+      "id": "PRR_kwDOExample03",
+      "author": {
+        "login": "example-owner"
+      },
+      "authorAssociation": "OWNER",
+      "body": "Verdict: ship it once the migration has run.",
+      "state": "COMMENTED",
+      "submittedAt": "2026-11-05T02:30:00Z"
+    }
+  ],
+  "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "conclusion": "SUCCESS",
+      "name": "ci",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    }
+  ],
+  "title": "[WIP] fix(lists): trim stale postings",
+  "updatedAt": "2026-11-05T02:30:00Z",
+  "url": "https://github.com/example-owner/pipeline/pull/7"
+}

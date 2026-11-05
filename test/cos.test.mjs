@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = realpathSync(join(fileURLToPath(import.meta.url), '..', '..'));
 const COS = join(ROOT, 'cos.mjs');
 const INSTALL = join(ROOT, 'install.sh');
-const { classifyPr } = await import(COS);
+const { classifyPr, prBlockReason } = await import(COS);
 const MAIN = realpathSync(
   join(execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: ROOT }).toString().trim(), '..'),
 );
@@ -333,8 +333,21 @@ describe('PR classification', () => {
     assert.equal(into({ mergeable: 'UNKNOWN', reviewDecision: 'APPROVED' }), 'mergeable-by-cos');
   });
 
-  test('a public base wins over every blocked rule', () => {
-    assert.equal(classifyPr(pr({ isDraft: true, checks: [] }), surface, 'main'), 'review');
+  test('on a public base, draft, conflicts and requested changes block; missing or red checks still go to review', () => {
+    assert.equal(classifyPr(pr({ isDraft: true }), surface, 'main'), 'blocked');
+    assert.equal(classifyPr(pr({ mergeable: 'CONFLICTING' }), surface, 'main'), 'blocked');
+    assert.equal(classifyPr(pr({ reviewDecision: 'CHANGES_REQUESTED' }), surface, 'main'), 'blocked');
+    assert.equal(classifyPr(pr({ checks: [] }), surface, 'main'), 'review');
+    assert.equal(classifyPr(pr({ checks: ['FAILURE'] }), surface, 'main'), 'review');
+  });
+
+  test('prBlockReason gives plain words for a blocked PR and null otherwise', () => {
+    assert.match(prBlockReason(pr({ isDraft: true }), surface, 'main'), /draft/);
+    assert.match(prBlockReason(pr({ mergeable: 'CONFLICTING' }), surface, 'main'), /conflicts/);
+    assert.match(prBlockReason(pr({ reviewDecision: 'CHANGES_REQUESTED' }), surface, 'main'), /asked for changes/);
+    assert.match(prBlockReason(pr({ base: 'develop', checks: ['FAILURE'] }), surface, 'main'), /checks/);
+    assert.equal(prBlockReason(pr(), surface, 'main'), null, 'a clean live PR is review, not blocked');
+    assert.equal(prBlockReason(pr({ base: 'develop' }), surface, 'main'), null);
   });
 
   test('without a public field the default branch counts as public', () => {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-05, harness e09b255
+
+- Test fixtures: made-up project and secret names so the public starter ships nothing personal
+- Mission control: Ready to QA, a work map, and live merges that can't be typed past a draft or conflict (#4)
+- and 2 internal changes
+
 ## 2026-11-05, harness 2ce913b
 
 - Test fixture: use a made-up project name so the starter ships nothing personal

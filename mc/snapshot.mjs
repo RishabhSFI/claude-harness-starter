@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { clean } from './activity.mjs';
+import { buildWorkMap } from './requests.mjs';
 import { mergedFromStatus, prsFromStatus, projectOfPath, queueOrder, sameSession } from './queue.mjs';
 
 export const LANES = [
@@ -249,7 +250,7 @@ export function buildKpis({ work, lanes, queueLength, usage }) {
   };
 }
 
-export function buildSnapshot({ projects, roots, status, sessions, tasks, settings, waiting, sweep, limitPauses = [], meta, activity = new Map(), usage = EMPTY_USAGE, system = null, now = new Date() }) {
+export function buildSnapshot({ projects, roots, status, sessions, tasks, settings, waiting, sweep, limitPauses = [], meta, activity = new Map(), usage = EMPTY_USAGE, system = null, qaCards = [], requests = [], links, now = new Date() }) {
   const prs = prsFromStatus(status);
   const working = tasks.filter((t) => t.state === 'starting' || t.state === 'working').length;
   const lanes = buildLanes(tasks, prs, now, mergedFromStatus(status));
@@ -268,6 +269,8 @@ export function buildSnapshot({ projects, roots, status, sessions, tasks, settin
     },
     fromReview: sweep ? { file: sweep.file, date: sweep.date, items: sweep.items } : null,
     work,
+    qa: { cards: qaCards },
+    workMap: buildWorkMap({ requests, work, limitPauses, qaCards, links, now }),
     feed: buildFeed(work, activity),
     kpis: buildKpis({ work, lanes, queueLength: queued.length, usage }),
     usage,

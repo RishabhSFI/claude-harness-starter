@@ -1,0 +1,53 @@
+{
+  "baseRefName": "main",
+  "body": "Adds a gate so the loop knows when work counts as done. No feature work.\n\n## The gate\n\n| Step | Command | Result |\n|---|---|---|\n| build | `npm run build` | pass |\n| test | `npm test` | 33 pass, 0 fail |\n\n## Supporting changes\n\n- `next.config.ts` reads `distDir` from an environment variable.\n- `.gitignore` keeps the gate file.\n\nAn independent review found nothing blocking.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+  "comments": [
+    {
+      "id": "IC_kwDOExample00AAAABi9Yi8g",
+      "author": {
+        "login": "vercel"
+      },
+      "authorAssociation": "NONE",
+      "body": "[vc]: #Z5Wv1W3BphRzJxF3qEgcGBYN8ZEp9Li5QXs3Ef+6vjQ=:eyJpc01vbm9yZXBvIjp0cnVlLCJ0eXBlIjoiZ2l0aHViIn0=\nThe latest updates on your projects. Learn more about [Vercel for GitHub](https://vercel.link/github-learn-more).\n\n| Project | Deployment | Actions | Updated |\n| :--- | :----- | :------ | :------ |\n| <a href=\"https://vercel.com/example-team/app\"><sup><img src=\"https://vercel.com/api/www/avatar?projectId=prj_example&teamId=team_example&s=32\" width=\"16\" height=\"16\" align=\"middle\" alt=\"\" /></sup></a> [app](https://vercel.com/example-team/app) | ![Ready](https://vercel.com/static/status/ready.svg) [Ready](https://vercel.com/example-team/app/CXUwLSkCPKpiCPyoA4oFziL31Qzi) | [Preview](https://app-git-claude-sweet-633b19-example-team.vercel.app), [Comment](https://app-git-claude-sweet-633b19-example-team.vercel.app?vercel-live-feedback-comment) | <relative-time datetime=\"2026-11-04T20:14:57.730Z\">Nov 4, 2026 8:14pm UTC</relative-time> |\n",
+      "createdAt": "2026-11-04T20:14:53Z",
+      "includesCreatedEdit": true,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "reactionGroups": [],
+      "url": "https://github.com/example-owner/app/pull/1#issuecomment-6641033970",
+      "viewerDidAuthor": false
+    }
+  ],
+  "createdAt": "2026-11-04T20:14:47Z",
+  "headRefName": "claude/sweet-noyce-3ffbd5",
+  "headRefOid": "732fbba822cc489c09bc72a7515bec999634fa40",
+  "isDraft": false,
+  "labels": [],
+  "mergeable": "UNKNOWN",
+  "number": 1,
+  "reviewDecision": "",
+  "reviews": [],
+  "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "StatusContext",
+      "context": "Vercel",
+      "startedAt": "2026-11-04T20:14:57Z",
+      "state": "SUCCESS",
+      "targetUrl": "https://vercel.com/example-team/app/CXUwLSkCPKpiCPyoA4oFziL31Qzi"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-04T20:14:58Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://vercel.com/github",
+      "name": "Vercel Preview Comments",
+      "startedAt": "2026-11-04T20:14:58Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    }
+  ],
+  "title": "feat: Add a gate so /until-ready can loop",
+  "updatedAt": "2026-11-04T21:47:46Z",
+  "url": "https://github.com/example-owner/app/pull/1"
+}

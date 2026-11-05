@@ -167,7 +167,7 @@ export function githubRepoOf(url) {
 }
 
 function listPullRequests(cwd, repo, fakePrsFile) {
-  const fields = 'number,title,headRefName,baseRefName,isDraft,url,statusCheckRollup,mergeable,reviewDecision';
+  const fields = 'number,title,headRefName,baseRefName,isDraft,url,statusCheckRollup,mergeable,reviewDecision,updatedAt,labels';
   const r = fakePrsFile
     ? { ok: true, out: readFileSync(fakePrsFile, 'utf8') }
     : run(GH, ['pr', 'list', '-R', repo, '--json', fields, '--limit', '20'], cwd, GH_TIMEOUT_MS);
@@ -183,6 +183,8 @@ function listPullRequests(cwd, repo, fakePrsFile) {
       checks: (pr.statusCheckRollup ?? []).map((c) => String(c.conclusion || c.state || '').toUpperCase()),
       mergeable: pr.mergeable ?? null,
       reviewDecision: pr.reviewDecision ?? null,
+      updatedAt: pr.updatedAt ?? null,
+      labels: (pr.labels ?? []).map((l) => ({ name: String(l?.name ?? '') })),
       failingChecks: (pr.statusCheckRollup ?? [])
         .filter((c) => FAILING_CHECK.has(c.conclusion) || FAILING_CHECK.has(c.state))
         .map((c) => c.name ?? c.context ?? 'check'),
@@ -221,27 +223,45 @@ function listMergedPullRequests(cwd, repo, { fakePrs, fakeMerged }) {
   }
 }
 
-/** First matching rule wins; no match means mergeable-by-cos. Every unknown fails closed. */
+/**
+ * First matching rule wins; no match means mergeable-by-cos. Every unknown fails closed. Draft, conflicts and requested
+ * changes sit above the public-branch rule so a live PR with any of them is blocked, not merely "review": the owner
+ * can confirm past failing checks on a live PR, never past these. `why` is the plain-words reason shown to the owner.
+ */
 const PR_RULES = [
-  { to: 'review', when: (pr) => !pr.base },
-  { to: 'review', when: (pr, publicBranches) => publicBranches.includes(pr.base) },
-  { to: 'blocked', when: (pr) => pr.isDraft },
-  { to: 'blocked', when: (pr) => !pr.checks?.length },
-  { to: 'blocked', when: (pr) => !pr.checks.every((c) => SUCCESS_CHECK.has(c)) },
-  { to: 'blocked', when: (pr) => pr.mergeable === 'CONFLICTING' },
-  { to: 'blocked', when: (pr) => pr.reviewDecision === 'CHANGES_REQUESTED' },
+  { to: 'review', why: "It doesn't say which branch it merges into.", when: (pr) => !pr.base },
+  { to: 'blocked', why: "It's still a draft.", when: (pr) => pr.isDraft },
+  { to: 'blocked', why: 'It has merge conflicts with its base branch.', when: (pr) => pr.mergeable === 'CONFLICTING' },
+  { to: 'blocked', why: 'A reviewer asked for changes.', when: (pr) => pr.reviewDecision === 'CHANGES_REQUESTED' },
+  { to: 'review', why: 'It lands in a public branch, so you look first.', when: (pr, publicBranches) => publicBranches.includes(pr.base) },
+  { to: 'blocked', why: 'It has no checks, so nothing shows it works.', when: (pr) => !pr.checks?.length },
+  { to: 'blocked', why: "Its checks aren't all green.", when: (pr) => !pr.checks.every((c) => SUCCESS_CHECK.has(c)) },
 ];
+
+const matchRule = (pr, surface, defaultBranch) => {
+  const publicBranches = surface ? surface.branches : [defaultBranch ?? 'main'];
+  return PR_RULES.find((rule) => rule.when(pr, publicBranches));
+};
 
 /**
  * review: lands in a public branch (or has no base), so the owner looks first.
- * blocked: draft, no checks, any check not green, conflicts, or changes requested.
+ * blocked: draft, conflicts or requested changes (even on a public branch), else no checks or any check not green.
  * @param {{base: string | null, isDraft: boolean, checks: string[], mergeable?: string | null, reviewDecision?: string | null}} pr
  * @param {PublicSurface | null} surface
  * @returns {'review' | 'blocked' | 'mergeable-by-cos'}
  */
 export function classifyPr(pr, surface, defaultBranch) {
-  const publicBranches = surface ? surface.branches : [defaultBranch ?? 'main'];
-  return PR_RULES.find((rule) => rule.when(pr, publicBranches))?.to ?? 'mergeable-by-cos';
+  return matchRule(pr, surface, defaultBranch)?.to ?? 'mergeable-by-cos';
+}
+
+/**
+ * Why a PR can't be merged yet, in plain words, or null when it is not 'blocked'. The merge refusal and the QA
+ * card's blockedBy both use this text.
+ * @returns {string | null}
+ */
+export function prBlockReason(pr, surface, defaultBranch) {
+  const rule = matchRule(pr, surface, defaultBranch);
+  return rule?.to === 'blocked' ? rule.why : null;
 }
 
 function canonical(p) {

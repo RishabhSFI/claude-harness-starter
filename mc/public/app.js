@@ -14,6 +14,8 @@ const PRIORITY = { 1: ['P1', 'bad'], 2: ['P2', ''], 3: ['P3', ''] };
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ICONS = {
   overview: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+  qa: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM8.5 12.5l2.5 2.5l4.5-5',
+  map: 'M3 6l6-2l6 2l6-2v14l-6 2l-6-2l-6 2zM9 4v14M15 6v14',
   work: 'M3 12h4l3-8 4 16 3-8h4',
   prs: 'M6 3a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM6 15a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM18 15a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM6 9v6M18 15v-5a3 3 0 0 0-3-3h-4M13 5l-2 2l2 2',
   queue: 'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01',
@@ -23,7 +25,9 @@ const ICONS = {
 };
 const VIEWS = [
   { id: 'overview', label: 'Overview' },
-  { id: 'work', label: 'Work' },
+  { id: 'qa', label: 'Ready to QA' },
+  { id: 'map', label: 'Work map' },
+  { id: 'work', label: 'Sessions' },
   { id: 'prs', label: 'Pull requests' },
   { id: 'queue', label: 'Queue' },
   { id: 'usage', label: 'Usage' },
@@ -37,8 +41,11 @@ let state = null;
 let pingAt = null;
 let view = 'overview';
 let workFilter = 'all';
+let mapFilter = 'all';
+let qaFocus = null;
+let doneOpen = false;
 const openPlans = new Set();
-const ui = { feed: [], feedNodes: new Map(), feedReady: false, chartKey: '', chartIdx: null };
+const ui = { qaKey: '', mapKey: '', feed: [], feedNodes: new Map(), feedReady: false, chartKey: '', chartIdx: null };
 
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -162,8 +169,8 @@ function checksLine(c) {
 async function merge(pr) {
   // A public merge takes this second, explicit click; the server refuses one without its confirm.
   const live = pr.classification === 'review';
-  const green = pr.checks ? pr.checks.total > 0 && pr.checks.pass === pr.checks.total : null;
-  const checks = checksLine(pr.checks);
+  const green = pr.green ?? (pr.checks ? pr.checks.total > 0 && pr.checks.pass === pr.checks.total : null);
+  const checks = pr.checksText ? `Checks: ${pr.checksText}.` : checksLine(pr.checks);
   const yes = await confirmAction({
     title: `Merge ${pr.repo}#${pr.number}?`,
     body: live
@@ -240,7 +247,7 @@ function smoothPath(pts) {
 }
 
 function sparkline(series) {
-  if (!series?.length || series.every((v) => !v)) return null;
+  if (!(series?.length > 1) || series.every((v) => !v)) return null;
   const [w, hgt, pad] = [84, 32, 2];
   const max = Math.max(...series) || 1;
   const pts = series.map((v, i) => [pad + (i * (w - 2 * pad)) / (series.length - 1), hgt - pad - (v / max) * (hgt - 2 * pad)]);
@@ -307,7 +314,7 @@ function activeCard(w) {
     stepLine(w.plan),
     w.plan ? progress(w.plan) : null,
     h('div', { class: 'doing' },
-      h('span', { class: 'what' }, w.doing?.text ?? 'Nothing read from its transcript yet'),
+      h('span', { class: 'what' }, w.doing?.text ?? 'Nothing read from its chat yet'),
       w.doing ? h('span', { class: 'when' }, ago(w.doing.at)) : null,
     ),
     w.said ? h('div', { class: 'said' }, w.said.text) : null,
@@ -349,6 +356,7 @@ function needsActions(item) {
 }
 
 function renderOverview() {
+  renderAnswers();
   const k = state.kpis;
   const sessions = state.work.length;
   $('kpis').replaceChildren(
@@ -529,7 +537,7 @@ function renderQueue() {
   const paused = m.paused ? ` Starts are paused${m.pauseReason ? `: ${m.pauseReason}` : ''}.` : '';
   $('queue-lead').textContent = m.cap
     ? `You've set a limit of ${m.cap} at once, so a task waits while ${m.cap} are running. ${running}${paused} Change it in Settings.`
-    : `Every task you add starts right away in its own worktree, so tasks in one project run side by side. ${running}${paused}`;
+    : `Every task you add starts right away in its own folder, so tasks in one project run side by side. ${running}${paused}`;
   const { waiting, active } = state.queue;
   $('waiting-count').textContent = waiting.length ? String(waiting.length) : '';
   $('queue').replaceChildren(...(waiting.length ? waiting.map((t) => taskRow(t, { waiting: true })) : [h('li', { class: 'empty' }, 'Nothing is waiting.')]));
@@ -553,7 +561,7 @@ function renderChart() {
   if (key === ui.chartKey) return;
   ui.chartKey = key;
   if (!hours.length || !width) {
-    box.replaceChildren(h('p', { class: 'empty' }, 'Reading transcripts. The chart shows up within a minute.'));
+    box.replaceChildren(h('p', { class: 'empty' }, 'Reading chat history. The chart shows up within a minute.'));
     return;
   }
   const [left, right, top, bottom] = [48, 8, 8, 24];
@@ -651,13 +659,13 @@ function renderSettings() {
   pause.textContent = m.paused ? 'Resume starts' : 'Pause starts';
   const p = m.paths ?? {};
   $('where').replaceChildren(
-    ...[['Sign-in token', p.token], ['Queue and settings', p.state], ['Action log', p.log], ['Transcripts read', p.transcripts]]
+    ...[['Sign-in token', p.token], ['Queue and settings', p.state], ['Action log', p.log], ['Chat history read', p.transcripts]]
       .filter(([, v]) => v)
       .flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, h('code', {}, v))]),
   );
   const n = m.leftover ?? 0;
   $('leftover').textContent = n
-    ? `${n === 1 ? '1 finished task still has its folder' : `${n} finished tasks still have their folders`} in a <project>-tasks folder. Mission control never deletes them; remove one with git worktree remove when you're done with it.`
+    ? `${n === 1 ? '1 finished task still has its folder' : `${n} finished tasks still have their folders`} in a <project>-tasks folder. Mission control never deletes them; remove one yourself when you're done with it.`
     : 'No finished task folders left on disk.';
   const review = state.fromReview;
   $('review-meta').textContent = review?.items.length ? `Proposed changes in ${review.file.split('/').pop()}. Act on them in the harness chat.` : 'No proposals in the latest daily review.';
@@ -666,11 +674,58 @@ function renderSettings() {
 
 function renderErrors() {
   const m = state.meta;
-  const errors = [m.errors?.sessions, m.errors?.status && `PR status: ${m.errors.status}`].filter(Boolean);
+  const errors = [m.errors?.sessions, m.errors?.status && `PR status: ${m.errors.status}`, m.errors?.qa && `Ready to QA: ${m.errors.qa}`].filter(Boolean);
   if (errors.length) notice(errors.join(' '), 'state');
   else if ($('banner').dataset.tone === 'state') notice(null);
 }
 
+const httpsHref = (url) => (/^https:\/\//.test(String(url ?? '')) ? url : null);
+const extLink = (label, href, cls = '') => (href ? h('a', { class: cls, href, target: '_blank', rel: 'noopener noreferrer' }, label) : null);
+
+const waitMs = (at) => (at && Number.isFinite(Date.parse(at)) ? Math.max(0, Date.now() - Date.parse(at)) : null);
+function durWords(ms) {
+  const hours = Math.floor(ms / 3600e3);
+  if (hours < 1) return 'less than an hour';
+  return hours < 24 ? plural(hours, 'hour') : plural(Math.floor(hours / 24), 'day');
+}
+const waitWords = (at) => (waitMs(at) === null ? null : `Waiting ${durWords(waitMs(at))}`);
+
+/** Cards that need the owner now, oldest first: not blocked on a worker and not already marked reviewed. */
+const readyCards = () => (state?.qa?.cards ?? []).filter((c) => !c.reviewedAt && !c.blockedBy);
+const qaOrder = (c) => (c.reviewedAt ? 2 : c.blockedBy ? 1 : 0);
+
+function checksState(c) {
+  if (!c) return null;
+  const tone = c.fail ? 'bad' : c.pending ? 'accent' : c.green ? 'ok' : 'warn';
+  return chip(`Checks: ${c.text}`, tone);
+}
+
+function renderAnswers() {
+  const counts = state.workMap?.counts ?? {};
+  const ready = readyCards();
+  const oldest = ready.map((c) => waitMs(c.waitingSince)).filter((n) => n !== null).sort((a, b) => b - a)[0];
+  const oldestText = oldest === undefined ? 'Nothing is waiting for you' : `Oldest has waited ${durWords(oldest)}`;
+  const tile = (label, value, sub, href, tone) =>
+    h('a', { class: 'kpi tile', href, 'data-tone': value ? tone : null }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), h('div', { class: 'sub' }, sub));
+  $('answers').replaceChildren(
+    tile('Ready for you to QA', ready.length, oldestText, '#qa', 'warn'),
+    tile('Being worked on now', counts.working ?? 0, [`${plural(counts.waiting_helper ?? 0, 'more is', 'more are')} between steps`, counts.paused ? `${counts.paused} paused until your usage resets` : null].filter(Boolean).join(', '), '#map/working', 'ok'),
+    tile('Not being worked on', counts.not_worked ?? 0, counts.not_worked ? 'Nobody is on these. Open them to start a worker' : 'Everything has someone on it', '#map/not_worked', 'bad'),
+  );
+  const top = ready.slice(0, 3);
+  $('qa-panel').hidden = !ready.length;
+  $('qa-mini').replaceChildren(
+    ...top.map((c) =>
+      h('article', { class: 'card qa-mini-card' },
+        h('div', { class: 'card-top' }, h('div', { class: 'name' }, c.title), chip(c.projectName)),
+        h('div', { class: 'proj' }, waitWords(c.waitingSince) ?? ''),
+        h('div', { class: 'meta' }, c.kind === 'pr' ? 'What to do next' : "What's left for you"),
+        h('p', { class: 'next' }, c.nextAction),
+        h('div', { class: 'acts left' }, h('a', { class: 'btn', href: `#qa/${encodeURIComponent(c.key)}` }, 'Open card')),
+      ),
+    ),
+  );
+}
 
 const bytesText = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${Math.round(b / 1024 ** 2)} MB`);
 const uptimeText = (sec) => (sec >= 86400 ? `${Math.floor(sec / 86400)}d ${Math.floor((sec % 86400) / 3600)}h` : `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`);
@@ -711,6 +766,197 @@ function volumeRow(d) {
       h('div', { class: 'meta num' }, `${bytesText(d.freeBytes)} free of ${bytesText(d.totalBytes)}${d.holds?.length ? `, holds ${d.holds.join(', ')}` : ''}`),
       h('div', { class: 'bar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(used), 'aria-label': `${used}% of ${diskName(d.mount)} used` }, h('span', { 'data-pct': used })),
     ),
+  );
+}
+
+/** Which checklist boxes the owner ticked, kept in this browser only. */
+function checkedBoxes(key) {
+  try {
+    const v = JSON.parse(localStorage.getItem(`mc-qa-check:${key}`));
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+function rememberBox(key, i, on) {
+  try {
+    const v = checkedBoxes(key);
+    v[i] = on;
+    localStorage.setItem(`mc-qa-check:${key}`, JSON.stringify(v));
+  } catch {}
+}
+
+function qaChecklist(c) {
+  if (!c.checklist?.length) return null;
+  const ticked = checkedBoxes(c.key);
+  return h('details', { class: 'fold', open: true },
+    h('summary', {}, 'QA checklist'),
+    h('ul', { class: 'checklist boxes' },
+      ...c.checklist.map((item, i) =>
+        h('li', {}, h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: ticked[i] === true, onchange: (e) => rememberBox(c.key, i, e.target.checked) }), h('span', {}, item))),
+      ),
+    ),
+  );
+}
+
+function qaLinks(c) {
+  const previewLabel = c.preview?.source === 'body' ? 'Link in the PR' : 'Preview';
+  return h('div', { class: 'qa-links' },
+    extLink('Open PR', safeHref(c.url)),
+    extLink('Files changed', safeHref(c.filesUrl)),
+    c.preview ? extLink(previewLabel, httpsHref(c.preview.url)) : h('span', { class: 'muted' }, 'No preview link'),
+    c.review ? extLink('Review', safeHref(c.review.url)) : null,
+  );
+}
+
+function mergeCard(c) {
+  return merge({ repo: c.repo, number: c.number, classification: c.live ? 'review' : 'mergeable-by-cos', base: c.base, green: c.checks?.green ?? null, checksText: c.checks?.text });
+}
+
+function qaCard(c) {
+  const isPr = c.kind === 'pr';
+  const reviewed = Boolean(c.reviewedAt);
+  return h('article', { class: `panel qa-card${reviewed ? ' done' : ''}`, 'data-key': c.key, id: `qa-${c.key.replace(/[^\w-]/g, '-')}` },
+    h('div', { class: 'qa-head' },
+      h('h3', { class: 'name' }, c.title),
+      chip(c.projectName),
+      isPr && c.live ? chip(`Goes live on ${c.base}`, 'warn') : null,
+      isPr && c.blockedBy ? chip('Not ready', 'bad') : null,
+      reviewed ? chip(isPr ? 'Reviewed by you' : 'Handled', 'ok') : null,
+    ),
+    h('div', { class: 'meta' }, waitWords(c.waitingSince), isPr && c.number ? `, PR #${c.number}` : null),
+    isPr && c.summary ? h('p', { class: 'summary' }, c.summary) : null,
+    isPr ? h('div', { class: 'chips' }, checksState(c.checks)) : null,
+    h('div', { class: 'meta' }, isPr ? 'What to do next' : "What's left for you"),
+    h('p', { class: 'next' }, c.nextAction),
+    isPr ? qaLinks(c) : null,
+    isPr && !c.preview && c.previewMissing ? h('p', { class: 'meta' }, c.previewMissing) : null,
+    isPr && c.review?.text ? h('details', { class: 'fold' }, h('summary', {}, 'What the review found'), h('p', { class: 'review-text' }, c.review.text)) : null,
+    isPr ? qaChecklist(c) : null,
+    h('div', { class: 'acts left qa-actions' },
+      isPr ? extLink('Open on GitHub', safeHref(c.url), 'btn') : null,
+      isPr ? h('button', { type: 'button', class: 'btn danger', disabled: Boolean(c.blockedBy), title: c.blockedBy ?? null, onclick: () => mergeCard(c) }, 'Merge') : null,
+      h('button', { type: 'button', class: 'btn', 'aria-pressed': String(reviewed), onclick: () => act('/api/qa/reviewed', { key: c.key, on: !reviewed }) }, reviewed ? (isPr ? 'Reviewed by you' : 'Marked as handled') : (isPr ? 'I have reviewed this' : 'Mark as handled')),
+    ),
+    isPr && c.blockedBy ? h('p', { class: 'meta' }, `Can't merge yet. ${c.blockedBy}`) : null,
+  );
+}
+
+function renderQa() {
+  const cards = (state.qa?.cards ?? []).map((c, i) => [c, i]).sort((a, b) => qaOrder(a[0]) - qaOrder(b[0]) || a[1] - b[1]).map(([c]) => c);
+  const key = JSON.stringify(cards);
+  if (key !== ui.qaKey) {
+    ui.qaKey = key;
+    $('qa-list').replaceChildren(...(cards.length ? cards.map(qaCard) : [h('p', { class: 'panel empty' }, 'Nothing is waiting for you. You are all caught up.')]));
+  }
+  const n = readyCards().length;
+  $('qa-lead').textContent = cards.length ? `${plural(n, 'thing')} waiting for you, oldest first. Do the first one, tick it off when you are done, and it leaves this list.` : '';
+  if (qaFocus) {
+    const el = [...document.querySelectorAll('.qa-card')].find((x) => x.dataset.key === qaFocus);
+    if (el) {
+      el.classList.add('focus');
+      el.scrollIntoView({ block: 'start' });
+    }
+    qaFocus = null;
+  }
+}
+
+const MAP_STATES = [
+  { id: 'working', label: 'Working now', tone: 'ok', means: 'A helper is working on it right now. Nothing for you to do.' },
+  { id: 'waiting_helper', label: 'Waiting on a helper', tone: 'accent', means: "A helper has it open but is between steps. It should carry on by itself; open its chat if it stays quiet." },
+  { id: 'paused', label: 'Paused at usage limit', tone: 'warn', means: "The helper hit your plan's usage limit and carries on after it resets. Nothing to do but wait." },
+  { id: 'waiting_you', label: 'Waiting on you', tone: 'warn', means: 'Your turn to look, test or decide. Open its card in Ready to QA.' },
+  { id: 'not_worked', label: 'Not being worked on', tone: 'bad', means: 'No helper is on it. Start a worker, or link a session that already is.' },
+  { id: 'done', label: 'Done', tone: 'ok', means: 'Finished and checked. Nothing to do.' },
+];
+
+function whenText(row) {
+  if (!row.at || !Number.isFinite(Date.parse(row.at))) return null;
+  if (row.state === 'paused') return `Resumes ${new Date(row.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`;
+  return ago(row.at);
+}
+
+function sessionSelect(label, options, onPick) {
+  const select = h('select', { 'aria-label': label, onchange: (e) => {
+    const v = e.target.value;
+    e.target.value = '';
+    if (v) onPick(v);
+  } }, h('option', { value: '' }, `${label}...`), ...options.map(([value, text]) => h('option', { value }, text)));
+  return select;
+}
+
+const linkSession = (reqId, sessionId, on) => act(`/api/requests/${encodeURIComponent(reqId)}/link`, { sessionId, on });
+
+async function startWorker(r) {
+  const yes = await confirmAction({
+    title: 'Start a worker?',
+    body: `A helper starts on "${r.text}" in ${projectName(r.project)}. It begins right away unless you've paused starts or set a limit on the Queue page.`,
+    okLabel: 'Start a worker',
+  });
+  if (yes) await act(`/api/requests/${encodeURIComponent(r.id)}/start`);
+}
+
+function mapRow(r) {
+  const meta = MAP_STATES.find((x) => x.id === r.state);
+  const linkedIds = new Set(r.sessions.map((x) => x.sessionId));
+  const choices = state.work.filter((w) => !linkedIds.has(w.sessionId)).map((w) => [w.sessionId, `${w.name} (${w.projectName})`]);
+  const startable = state.projects.some((p) => p.id === r.project);
+  const when = whenText(r);
+  return h('article', { class: 'panel maprow' },
+    h('div', { class: 'maprow-head' },
+      h('h3', { class: 'name' }, r.text),
+      chip(meta.label, meta.tone),
+    ),
+    h('div', { class: 'meta' }, [r.project ? projectName(r.project) : 'No project', when].filter(Boolean).join(', ')),
+    h('p', { class: 'reason' }, r.reason),
+    r.sessions.length
+      ? h('ul', { class: 'linked' }, ...r.sessions.map((x) =>
+          h('li', {},
+            h('div', { class: 'body' }, h('div', { class: 'title' }, x.name), h('div', { class: 'meta' }, x.why.replace(/^Shares the words:/, 'Looks related, matching words:'))),
+            h('div', { class: 'acts' }, btn('Open chat', () => openSession(x.sessionId)), btn('Unlink', () => linkSession(r.id, x.sessionId, false), 'ghost')),
+          )))
+      : null,
+    h('div', { class: 'acts left' },
+      r.state === 'not_worked' && r.queued ? chip('A worker is queued', 'accent') : null,
+      r.state === 'not_worked' && !r.queued ? h('button', { type: 'button', class: 'btn primary', disabled: !startable, title: startable ? null : "This request isn't tied to a project mission control can start a worker in.", onclick: () => startWorker(r) }, 'Start a worker') : null,
+      r.state === 'waiting_you' && r.qaKey ? h('a', { class: 'btn primary', href: `#qa/${encodeURIComponent(r.qaKey)}` }, 'Open QA card') : null,
+      extLink('Open PR', safeHref(r.prUrl), 'btn'),
+      choices.length ? sessionSelect('Link a session', choices, (id) => linkSession(r.id, id, true)) : null,
+    ),
+  );
+}
+
+function renderMap() {
+  const map = state.workMap ?? { rows: [], other: [], counts: {} };
+  const key = JSON.stringify([map, mapFilter, state.projects, state.work.map((w) => [w.sessionId, w.name, w.projectName])]);
+  if (key === ui.mapKey) return;
+  ui.mapKey = key;
+  if (!legendSet) { legendSet = true; }
+  $('map-legend').replaceChildren(...MAP_STATES.map((m) => h('li', {}, chip(m.label, m.tone), h('div', { class: 'body' }, m.means))));
+  const opt = (id, label, n) => h('button', { type: 'button', 'aria-pressed': String(mapFilter === id), onclick: () => { mapFilter = id; ui.mapKey = ''; renderMap(); } }, label, h('span', { class: 'n' }, n));
+  $('map-filter').replaceChildren(opt('all', 'All', map.rows.length), ...MAP_STATES.map((m) => opt(m.id, m.label, map.counts[m.id] ?? 0)));
+  const out = [];
+  for (const m of MAP_STATES.filter((x) => mapFilter === 'all' || mapFilter === x.id)) {
+    const rows = map.rows.filter((r) => r.state === m.id);
+    if (!rows.length) continue;
+    if (m.id === 'done') {
+      out.push(h('details', { class: 'fold done-fold', open: doneOpen || mapFilter === 'done', ontoggle: (e) => { doneOpen = e.target.open; } }, h('summary', {}, `Done (${rows.length})`), h('div', { class: 'work-list' }, ...rows.map(mapRow))));
+    } else out.push(h('h2', { class: 'group-h' }, `${m.label} (${rows.length})`), h('p', { class: 'meta group-means' }, m.means), ...rows.map(mapRow));
+  }
+  $('map-rows').replaceChildren(...(out.length ? out : [h('p', { class: 'panel empty' }, map.rows.length ? 'Nothing is in that state.' : 'No requests are listed yet.')]));
+  $('other-count').textContent = map.other.length ? String(map.other.length) : '';
+  const asks = map.rows.filter((r) => r.state !== 'done').map((r) => [r.id, r.text.length > 70 ? `${r.text.slice(0, 69)}…` : r.text]);
+  $('map-other').replaceChildren(
+    ...(map.other.length
+      ? map.other.map((o) =>
+          h('li', {},
+            h('div', { class: 'body' },
+              h('div', { class: 'title' }, o.name),
+              h('div', { class: 'meta' }, [o.projectName, o.doing ?? (o.status === 'busy' ? 'Working' : 'Idle')].filter(Boolean).join(', ')),
+            ),
+            h('div', { class: 'acts' }, btn('Open chat', () => openSession(o.sessionId)), asks.length ? sessionSelect('Link to a request', asks, (reqId) => linkSession(reqId, o.sessionId, true)) : null),
+          ))
+      : [h('li', { class: 'empty' }, 'Every open session is on a request.')]),
   );
 }
 
@@ -776,7 +1022,9 @@ function renderSystem() {
   applyBars(document.querySelector('section[data-view="system"]'));
 }
 
-const RENDER = { overview: renderOverview, work: renderWork, prs: renderLanes, queue: renderQueue, usage: renderUsage, system: renderSystem, settings: renderSettings };
+const RENDER = { overview: renderOverview, qa: renderQa, map: renderMap, work: renderWork, prs: renderLanes, queue: renderQueue, usage: renderUsage, system: renderSystem, settings: renderSettings };
+
+let legendSet = false;
 
 function renderNav() {
   const needs = state?.needsYou.length ?? 0;
@@ -785,10 +1033,10 @@ function renderNav() {
     if (id === view) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
     const badge = a.querySelector('.badge');
-    const count = id === 'overview' ? needs : id === 'system' ? state?.system?.alerts.length ?? 0 : 0;
+    const n = id === 'overview' ? needs : id === 'qa' ? readyCards().length : id === 'system' ? state?.system?.alerts.length ?? 0 : 0;
     if (badge) {
-      badge.hidden = !count;
-      badge.textContent = String(count);
+      badge.hidden = !n;
+      badge.textContent = String(n);
     }
   }
 }
@@ -807,11 +1055,19 @@ function renderClock() {
 }
 
 function route() {
-  const id = location.hash.slice(1);
+  const [id, param = ''] = location.hash.slice(1).split('/');
   view = VIEWS.some((v) => v.id === id) ? id : 'overview';
+  let extra = null;
+  try {
+    extra = decodeURIComponent(param);
+  } catch {}
+  qaFocus = view === 'qa' && extra ? extra : null;
+  if (view === 'map') mapFilter = MAP_STATES.some((x) => x.id === extra) ? extra : 'all';
   for (const sec of document.querySelectorAll('.view')) sec.hidden = sec.dataset.view !== view;
   $('view-title').textContent = VIEWS.find((v) => v.id === view).label;
   ui.chartKey = '';
+  ui.qaKey = '';
+  ui.mapKey = '';
   render();
   renderNav();
 }
@@ -820,7 +1076,7 @@ function buildNav() {
   $('nav').replaceChildren(
     ...VIEWS.map((v) =>
       h('li', {},
-        h('a', { href: `#${v.id}`, 'data-view': v.id, 'aria-label': v.label }, icon(v.id), h('span', { class: 'label', 'aria-hidden': 'true' }, v.label), ['overview', 'system'].includes(v.id) ? h('span', { class: 'badge', hidden: true }) : null),
+        h('a', { href: `#${v.id}`, 'data-view': v.id, 'aria-label': v.label }, icon(v.id), h('span', { class: 'label', 'aria-hidden': 'true' }, v.label), ['overview', 'qa', 'system'].includes(v.id) ? h('span', { class: 'badge', hidden: true }) : null),
       ),
     ),
   );

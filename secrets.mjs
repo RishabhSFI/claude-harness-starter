@@ -263,6 +263,32 @@ function readCache(file, now) {
   }
 }
 
+/** Fills the network-only results from cached entries, leaving the ones with no entry unknown. */
+function overlayCache(results, projects, cached) {
+  for (const r of results) {
+    const project = projects.find((p) => p.id === r.id);
+    r.secrets = r.secrets.map((res, i) => {
+      const spec = project.secrets[i];
+      const hit = KINDS[spec.target.kind].network ? cached[cacheKey(project, spec)] : null;
+      return hit ? { name: res.name, where: res.where, purpose: res.purpose, required: res.required, status: hit.status, ...(hit.add && { add: hit.add }) } : res;
+    });
+  }
+  return results;
+}
+
+/**
+ * The last saved online answers, whatever their age, and no network: for a page that must not run the CLIs.
+ * Anything never checked online stays unknown.
+ */
+export function cachedSecrets(projects, { cacheFile, ...opts } = {}) {
+  let entries = {};
+  try {
+    const c = JSON.parse(readFileSync(cacheFile, 'utf8'));
+    if (c?.entries && typeof c.entries === 'object') entries = c.entries;
+  } catch {}
+  return overlayCache(checkSecrets(projects, { ...opts, online: false }), projects, entries);
+}
+
 /**
  * The online checks, reusing results under 30 minutes old unless `refresh`. Offline never reads the cache.
  * The cache file holds names, statuses, reasons and add commands for present or missing network secrets, never CLI output.
@@ -272,19 +298,7 @@ export function resolveSecrets(projects, { online = true, refresh = false, cache
   if (!online) return checkSecrets(projects, { ...opts, online: false });
   const network = projects.flatMap((p) => p.secrets.filter((s) => KINDS[s.target.kind].network).map((s) => ({ p, s })));
   const cached = refresh || !cacheFile ? null : readCache(cacheFile, now);
-  if (cached && network.every(({ p, s }) => cached[cacheKey(p, s)])) {
-    const results = checkSecrets(projects, { ...opts, online: false });
-    for (const r of results) {
-      const project = projects.find((p) => p.id === r.id);
-      r.secrets = r.secrets.map((res, i) => {
-        const spec = project.secrets[i];
-        if (!KINDS[spec.target.kind].network) return res;
-        const { status, add } = cached[cacheKey(project, spec)];
-        return { name: res.name, where: res.where, purpose: res.purpose, required: res.required, status, ...(add && { add }) };
-      });
-    }
-    return results;
-  }
+  if (cached && network.every(({ p, s }) => cached[cacheKey(p, s)])) return overlayCache(checkSecrets(projects, { ...opts, online: false }), projects, cached);
   const results = checkSecrets(projects, { ...opts, online: true });
   if (cacheFile) {
     const entries = {};

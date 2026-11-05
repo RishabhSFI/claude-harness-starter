@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findGh, loadRegistry } from '../cos.mjs';
+import { findGh, githubRepoOf, loadRegistry } from '../cos.mjs';
 import { findPaused, parseResetText } from '../limits.mjs';
 import * as actions from './actions.mjs';
 import { createActivityReader, DEFAULT_PROJECTS_DIR } from './activity.mjs';
+import { buildQa, createQaFetcher, isQaPr, loadReviewed, saveReviewed } from './qa.mjs';
 import * as q from './queue.mjs';
+import { loadLinks, parseRequests, saveLinks, setLink } from './requests.mjs';
+import { cachedSecrets } from '../secrets.mjs';
 import { buildSnapshot, prRef, readSweep } from './snapshot.mjs';
 import { canStop, createSystemSampler, folderTargets, REFUSALS } from './system.mjs';
 import { createUsageTracker } from './usage.mjs';
@@ -127,17 +131,41 @@ function sendJson(res, status, value) {
   res.end(JSON.stringify(value));
 }
 
+/** The harness itself as a project, so its requests can start a worker, its PRs get QA cards and its main branch needs the live confirm. */
+function harnessProject(registryProjects, override) {
+  if (registryProjects.some((p) => p.id === 'harness')) return [];
+  const dir = override?.dir ?? HARNESS_DIR;
+  let repo = override?.repo;
+  if (repo === undefined) {
+    try {
+      repo = githubRepoOf(execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: dir, encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }));
+    } catch {
+      repo = null;
+    }
+  }
+  return [{ id: 'harness', name: 'Harness', what: 'The tooling that runs these projects.', checkouts: [dir], aliases: [], keywords: [], public: { branches: ['main'], remotes: [], notes: [] }, repos: repo ? [repo] : [], site: null, secrets: [] }];
+}
+
+/** A short task title from a request: its first sentence, at most 80 characters. */
+export function shortTitle(text) {
+  const one = String(text).replace(/\s+/g, ' ').trim();
+  const sentence = one.split(/(?<=[.!?:])\s/)[0];
+  if (sentence.length <= 80) return sentence.replace(/[.:]$/, '');
+  const cut = sentence.slice(0, 79);
+  return `${cut.slice(0, cut.lastIndexOf(' ') > 40 ? cut.lastIndexOf(' ') : 79).trimEnd()}…`;
+}
+
 const SESSION_ID = /^[0-9a-f][0-9a-f-]{5,63}$/i;
 const TASK_ID = /^[0-9a-f]{6}$/;
 
 /**
- * @param {{port: number, registryFile?: string, stateDir?: string, tokenFile?: string, projectsDir?: string, claudeBin?: string | null, ghBin?: string, intervals?: Partial<typeof DEFAULT_INTERVALS>, system?: ReturnType<typeof createSystemSampler> | null, kill?: (pid: number, signal: string) => void, log?: (line: string) => void}} opts
+ * @param {{port: number, registryFile?: string, requestsFile?: string, harness?: {dir?: string, repo?: string | null}, stateDir?: string, tokenFile?: string, projectsDir?: string, claudeBin?: string | null, ghBin?: string, intervals?: Partial<typeof DEFAULT_INTERVALS>, system?: ReturnType<typeof createSystemSampler> | null, kill?: (pid: number, signal: string) => void, log?: (line: string) => void}} opts
  */
 export function createMissionControl(opts) {
   const port = opts.port;
   const registryFile = opts.registryFile ?? join(HARNESS_DIR, 'projects.json');
   const stateDir = opts.stateDir ?? join(MC_DIR, 'state');
-  const files = { queue: join(stateDir, 'queue.json'), settings: join(stateDir, 'settings.json'), lock: join(stateDir, 'server.lock'), resumed: join(stateDir, 'resumed.json') };
+  const files = { queue: join(stateDir, 'queue.json'), settings: join(stateDir, 'settings.json'), lock: join(stateDir, 'server.lock'), resumed: join(stateDir, 'resumed.json'), reviewed: join(stateDir, 'qa-reviewed.json'), links: join(stateDir, 'request-links.json'), requests: opts.requestsFile ?? join(dirname(resolve(registryFile)), 'wiki', 'topics', 'owner-requests.md'), secretsCache: join(dirname(resolve(registryFile)), '.claude', 'secrets-cache.json') };
   const intervals = { ...DEFAULT_INTERVALS, ...opts.intervals };
   const tokenFile = opts.tokenFile ?? join(homedir(), '.claude', 'mission-control.token');
   const token = ensureToken(tokenFile);
@@ -146,7 +174,8 @@ export function createMissionControl(opts) {
   const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
   const allowedOrigins = new Set([...allowedHosts].map((h) => `http://${h}`));
 
-  const projects = loadRegistry(registryFile);
+  const registryProjects = loadRegistry(registryFile);
+  const projects = [...registryProjects, ...harnessProject(registryProjects, opts.harness)];
   const roots = q.projectRoots(projects);
   const projectsDir = opts.projectsDir ?? DEFAULT_PROJECTS_DIR;
   const reader = createActivityReader({ projectsDir });
@@ -163,7 +192,7 @@ export function createMissionControl(opts) {
     waiting: {},
     activity: new Map(),
     usage: undefined,
-    errors: { sessions: null, status: null },
+    errors: { sessions: null, status: null, qa: null },
     at: { sessions: null, status: null, sweep: null },
     launching: null,
     launchingId: null,
@@ -172,7 +201,19 @@ export function createMissionControl(opts) {
     sessionsRun: null,
     sessionsAgain: false,
     prLookups: new Set(),
+    requests: { mtime: -2, list: [] },
+    links: loadLinks(files.links),
+    reviewed: loadReviewed(files.reviewed),
+    qaDetails: new Map(),
+    missingKeys: {},
+    qaRun: null,
+    qaVersion: 0,
+    qaCache: null,
   };
+  const allRepos = projects.flatMap((p) => p.repos);
+  const qaFetcher = createQaFetcher({ exec: actions.exec, ghBin: ctx.ghBin });
+  const qaProjects = () =>
+    Object.fromEntries(projects.flatMap((p) => p.repos.map((repo) => [repo.toLowerCase(), { project: p.id, projectName: p.name, publicBranches: p.public ? p.public.branches : ['main'] }])));
   const tilde = (p) => (p.startsWith(homedir()) ? `~${p.slice(homedir().length)}` : p);
   const paths = { token: tilde(tokenFile), state: tilde(stateDir), log: tilde(ctx.logFile), transcripts: tilde(projectsDir) };
   const clients = new Set();
@@ -228,8 +269,94 @@ export function createMissionControl(opts) {
     return actions.leftoverWorktrees(projects).filter((dir) => !live.has(basename(dir))).length;
   }
 
+  /** The owner's request list, re-read only when the file changes. */
+  function currentRequests() {
+    let mtime = -1;
+    try {
+      mtime = statSync(files.requests).mtimeMs;
+    } catch {}
+    if (s.requests.mtime !== mtime) {
+      let list = [];
+      try {
+        if (mtime >= 0) list = parseRequests(readFileSync(files.requests, 'utf8'), { repos: allRepos });
+      } catch (e) {
+        log(`request list read failed: ${e.message}`);
+      }
+      s.requests = { mtime, list };
+      s.qaVersion += 1;
+    }
+    return s.requests.list;
+  }
+
+  function qaCards() {
+    const requests = currentRequests();
+    if (s.qaCache?.version !== s.qaVersion) {
+      s.qaCache = { version: s.qaVersion, cards: buildQa({ details: [...s.qaDetails.values()], requests, reviewed: s.reviewed, ctx: { projects: qaProjects(), missingKeys: s.missingKeys } }) };
+    }
+    return s.qaCache.cards;
+  }
+
+  /** Which PRs deserve a closer look, then their details from GitHub. A failed fetch keeps the last good copy. */
+  async function refreshQa() {
+    if (s.qaRun) return s.qaRun;
+    s.qaRun = (async () => {
+      try {
+        const requests = currentRequests();
+        const byRepo = qaProjects();
+        const waitingRefs = new Set(requests.filter((r) => r.section === 'waiting').flatMap((r) => r.prs.map((p) => p.toLowerCase())));
+        const wanted = new Map();
+        const want = (repo, number, updatedAt) => {
+          const key = `${repo}#${number}`;
+          if (byRepo[repo.toLowerCase()] && !wanted.has(key)) wanted.set(key, { key, repo, number, updatedAt });
+        };
+        for (const pr of q.prsFromStatus(s.status)) {
+          const ref = prRef(pr.url);
+          const per = { repo: ref?.repo ?? '', publicBranches: byRepo[ref?.repo.toLowerCase()]?.publicBranches, waitingRefs };
+          if (ref && (pr.classification === 'review' || isQaPr({ baseRefName: pr.base, labels: pr.labels, number: pr.number }, per))) want(ref.repo, pr.number, pr.updatedAt);
+        }
+        const bucket = String(Math.floor(Date.now() / 300_000));
+        for (const r of requests.filter((x) => x.section !== 'done')) {
+          for (const ref of r.prs) {
+            const m = ref.match(/^(.+)#(\d+)$/);
+            if (m) want(m[1], Number(m[2]), bucket);
+          }
+        }
+        let failed = null;
+        const list = [...wanted.values()];
+        for (let i = 0; i < list.length && !s.closed; i += 3) {
+          await Promise.all(list.slice(i, i + 3).map(async (w) => {
+            const r = await qaFetcher.get(w);
+            if (r.ok) s.qaDetails.set(w.key, { repo: w.repo, detail: r.detail, deployments: r.deployments });
+            else failed = `${w.key}: ${r.message}`;
+          }));
+        }
+        for (const key of [...s.qaDetails.keys()]) if (!wanted.has(key)) s.qaDetails.delete(key);
+        try {
+          const missing = {};
+          for (const r of cachedSecrets(projects, { cacheFile: files.secretsCache })) {
+            const names = r.secrets.filter((x) => x.required && x.status === 'missing').map((x) => x.name);
+            if (names.length) missing[r.id] = names;
+          }
+          s.missingKeys = missing;
+        } catch (e) {
+          log(`secrets cache read failed: ${e.message}`);
+        }
+        s.errors.qa = failed ? `Couldn't read ${failed}` : null;
+        s.qaVersion += 1;
+      } catch (e) {
+        s.errors.qa = e.message;
+        log(`qa refresh failed: ${e.stack}`);
+      }
+      s.qaRun = null;
+      publish();
+    })();
+    return s.qaRun;
+  }
+
   function snapshot() {
-    return buildSnapshot({
+    const cards = qaCards();
+    const queuedFor = new Set(s.tasks.filter((t) => t.requestId && !q.TERMINAL.has(t.state)).map((t) => t.requestId));
+    const snap = buildSnapshot({
       projects,
       roots,
       status: s.status,
@@ -241,9 +368,14 @@ export function createMissionControl(opts) {
       limitPauses: s.limitPauses,
       activity: s.activity,
       usage: s.usage,
+      qaCards: cards,
+      requests: s.requests.list,
+      links: s.links,
       system: system?.snapshot() ?? null,
       meta: { errors: s.errors, statusAt: s.at.status, sweepAt: s.at.sweep, claudeFound: Boolean(ctx.claudeBin), paths, leftover: leftover() },
     });
+    snap.workMap.rows = snap.workMap.rows.map((r) => ({ ...r, queued: queuedFor.has(r.id) }));
+    return snap;
   }
 
   function writeEvent(res, event, data) {
@@ -405,6 +537,7 @@ export function createMissionControl(opts) {
       }
       s.statusRun = null;
       tick();
+      void refreshQa();
     })();
     return s.statusRun;
   }
@@ -454,6 +587,12 @@ export function createMissionControl(opts) {
     if (!task) throw new HttpError(404, 'No such task.');
     if (states && !states.includes(task.state)) throw new HttpError(409, `That task is ${task.state.replace('_', ' ')}.`);
     return task;
+  }
+
+  function requireRequest(id) {
+    const req = s.requests.list.find((r) => r.id === id) ?? (currentRequests(), s.requests.list.find((r) => r.id === id));
+    if (!req) throw new HttpError(404, 'No such request.');
+    return req;
   }
 
   /** Each handler gets the parsed body and route params, and returns a JSON-able result. */
@@ -542,6 +681,49 @@ export function createMissionControl(opts) {
         if (task) replaceTask(q.transition(task, 'merged', { note: `merged ${repo}#${number}` }));
         refreshStatus();
         return { ok: true };
+      },
+    },
+    {
+      path: /^\/api\/qa\/reviewed$/,
+      run: (body) => {
+        const key = String(body.key ?? '');
+        if (!/^([\w.-]+\/[\w.-]+#\d+|req:[\w-]+)$/.test(key) || typeof body.on !== 'boolean') throw new HttpError(400, 'Need the card key and on: true or false.');
+        const next = { ...s.reviewed };
+        if (body.on) next[key] = new Date().toISOString();
+        else delete next[key];
+        s.reviewed = next;
+        saveReviewed(files.reviewed, next);
+        s.qaVersion += 1;
+        publish();
+        return { ok: true };
+      },
+    },
+    {
+      path: /^\/api\/requests\/([^/]+)\/link$/,
+      run: (body, [id]) => {
+        requireRequest(id);
+        if (!SESSION_ID.test(String(body.sessionId ?? '')) || typeof body.on !== 'boolean') throw new HttpError(400, 'Need a session id and on: true or false.');
+        s.links = setLink(s.links, id, body.sessionId, body.on);
+        saveLinks(files.links, s.links);
+        publish();
+        return { ok: true };
+      },
+    },
+    {
+      path: /^\/api\/requests\/([^/]+)\/start$/,
+      run: (_, [id]) => {
+        const req = requireRequest(id);
+        const project = projects.find((p) => p.id === req.project);
+        if (req.section === 'done') throw new HttpError(400, 'That request is already done.');
+        if (!project || !existsSync(project.checkouts[0] ?? '')) throw new HttpError(400, `${req.project ? `"${req.project}"` : 'This request'} isn't a project mission control can start a worker in.`);
+        if (s.tasks.some((t) => t.requestId === id && !q.TERMINAL.has(t.state))) throw new HttpError(409, 'A worker is already queued for this request.');
+        const prompt = [req.text, req.stands && `Where it stands: ${req.stands}`, req.prs.length && `Related pull requests: ${req.prs.join(', ')}`, `From the owner's request list${req.asked ? ` (asked ${req.asked})` : ''}.`].filter(Boolean).join('\n\n');
+        const task = { ...q.createTask({ project: project.id, title: shortTitle(req.text), prompt }, { projects }), requestId: id };
+        s.tasks = [...s.tasks, task];
+        saveTasks();
+        actions.logAction(ctx, 'add', { taskId: task.id, project: task.project, requestId: id });
+        tick();
+        return { ok: true, task: { id: task.id } };
       },
     },
     {
@@ -691,7 +873,7 @@ export function createMissionControl(opts) {
       for (const res of clients) res.end();
       clients.clear();
       await new Promise((done) => server.close(() => done()));
-      await Promise.allSettled([s.sessionsRun, s.statusRun]);
+      await Promise.allSettled([s.sessionsRun, s.statusRun, s.qaRun]);
       dropLock(files.lock);
     },
   };

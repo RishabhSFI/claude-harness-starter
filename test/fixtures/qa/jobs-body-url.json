@@ -1,0 +1,40 @@
+{
+  "baseRefName": "main",
+  "body": "Goal: make the scheduled jobs and the site reliable without needing anything from the owner.\n\nThe repo has no Actions secrets, so the daily job has failed red every day. After this PR it skips calmly until the secrets exist.\n\n## What changed\n\n**Missing secrets** (`scout/ci.py`)\n- In GitHub Actions, when a required secret is missing, the job prints one warning, exits 0 and does not run.\n- It opens or updates one issue that lists secret names only, never values.\n\n## Decisions\n- One issue covers all three jobs.\n- SITE_URL is left for the owner to decide. Set the repository variable `SITE_URL` to `https://example-hub.vercel.app`, or point the domain at the hub.\n\n## Checks\n- Gate passes on the final commit.\n- Scout tests: 45 pass locally.\n\n## Review\nAn independent reviewer (Opus) found no high-severity issues. It raised one medium finding and five low ones, all fixed in the last commit:\n- **Medium:** the tests could load a real `.env`. They now never do.\n- A malformed SITE_URL could turn a skip red. It is now advisory.\n\n## For the owner\nAdd these repository secrets:\n- Required: `DB_URL`, `DB_SERVICE_KEY`\n- Optional: `X_BEARER_TOKEN`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+  "comments": [],
+  "createdAt": "2026-11-05T01:29:37Z",
+  "headRefName": "claude/vigilant-yalow-ceb277",
+  "headRefOid": "6ffc9da36213896f2c8a1df3aa3f14feec91959c",
+  "isDraft": false,
+  "labels": [],
+  "mergeable": "MERGEABLE",
+  "number": 3,
+  "reviewDecision": "",
+  "reviews": [],
+  "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-05T01:30:28Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/example-owner/jobs/actions/runs/41948883868/job/126987814206",
+      "name": "web",
+      "startedAt": "2026-11-05T01:29:43Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-05T01:29:59Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/example-owner/jobs/actions/runs/41948883868/job/126987813868",
+      "name": "scout",
+      "startedAt": "2026-11-05T01:29:43Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    }
+  ],
+  "title": "Pause scheduled jobs calmly when secrets are missing",
+  "updatedAt": "2026-11-05T01:29:37Z",
+  "url": "https://github.com/example-owner/jobs/pull/3"
+}

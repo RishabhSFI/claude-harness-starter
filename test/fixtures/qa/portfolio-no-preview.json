@@ -1,0 +1,27 @@
+{
+  "baseRefName": "main",
+  "body": "**QA change, please review first.** With your OK in session, commit 1061bc4 touches only `qa/page.mjs` and swaps two checks for features this PR removes. Every other check and budget is unchanged.\n\n| Before | After |\n| --- | --- |\n| The intro gate shows on `?intro` | The page opens straight to the work |\n| The sample card opens and closes | Every tile opens its dialog |\n\nUnchanged: console errors, failed requests, sideways scroll, broken in-page links.\n\n## Goal\n\nFrom the owner: make the site a personal portfolio, and cut what wastes the visitor's time.\n\n## Audit\n\n| Part | Verdict | Why |\n| --- | --- | --- |\n| Landing gate | Cut | It makes first-time visitors wait. |\n| Selected work tiles | Keep | This is the portfolio. |\n\n## Screenshots\n\n| | Before | After |\n| --- | --- | --- |\n| 1440px | ![](https://github.com/example-owner/example-site/blob/task/portfolio-shots/before-desktop.png?raw=true) | ![](https://github.com/example-owner/example-site/blob/task/portfolio-shots/after-desktop.png?raw=true) |\n\n## Decisions\n\n- **No resume link.** A portfolio doesn't need one.\n- **Role titles keep \"Internship\".** That's the factual title.\n\n## Checks\n\n- `node qa/static.mjs`: static: ok (11 asset paths, 43 ids)\n- `node qa/page.mjs`: page: ok desktop 1440px / page: ok phone 375px\n- Looked at the page at 1440px and 375px, including every dialog.\n- **Independent review** (separate agent):\n  - No runtime breakage. It checked deep links, print, reduced motion and the lightbox.\n  - Lows fixed here: the stale share card and a duplicate pill.\n  - Open: old anchors `#model` and `#risks` now land at the top.\n- **Unslop pass:** applied the cover dedupe and the About rewrite.\n\n## Left for you\n\n- **Preview deploy.** The auto-mode check blocked the Vercel CLI here, and the repo has no Vercel git integration, so there's no preview link. Run `npx vercel@latest deploy --scope example-team` on this branch for one.\n- **PLAN.md \"your call\" items:**\n  - 6: Slide 8 wording\n  - 8: Sign-off to show the deck\n  - 10: custom domain\n- **Sources to confirm:** two figures on the pipeline tile have no source note.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+  "comments": [],
+  "createdAt": "2026-11-04T21:19:01Z",
+  "files": [
+    {
+      "path": "index.html",
+      "additions": 94,
+      "deletions": 1262,
+      "changeType": "MODIFIED"
+    }
+  ],
+  "headRefName": "task/portfolio",
+  "headRefOid": "1061bc4a2e5d7f0c3b9a8e6d4c2b1a0f9e8d7c6b",
+  "isDraft": false,
+  "labels": [],
+  "mergeable": "MERGEABLE",
+  "number": 4,
+  "reviewDecision": "",
+  "reviews": [],
+  "state": "OPEN",
+  "statusCheckRollup": [],
+  "title": "Make the site a personal portfolio, cut the gimmicks",
+  "updatedAt": "2026-11-04T22:02:11Z",
+  "url": "https://github.com/example-owner/example-site/pull/4"
+}
