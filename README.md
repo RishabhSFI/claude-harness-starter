@@ -11,7 +11,9 @@ What's in here:
 
 - `cos.mjs` and `skills/cos/`: the Chief of Staff, the hub chat (`/cos`).
 - `gate/` and `skills/until-ready/`: the loop that won't let a worker stop
-  until the checks pass (`/until-ready`).
+  until the checks pass (`/until-ready`). `gate/security-audit.mjs` and
+  `skills/security-audit/` (Cloudflare's skill, MIT) add a security audit of
+  each change as one gate step.
 - `global/CLAUDE.md`: rules for every session.
 - `wiki.mjs`, `skills/wiki/` and `starter-wiki/`: a wiki your sessions keep,
   so facts survive from one chat to the next.
@@ -61,7 +63,7 @@ What's in here:
    sh install.sh
    ```
 
-   It links the three skills and the global rules into `~/.claude`, and adds
+   It links the four skills and the global rules into `~/.claude`, and adds
    two hooks to `~/.claude/settings.json` (it saves a `.bak` copy first).
    It's safe to run again.
 

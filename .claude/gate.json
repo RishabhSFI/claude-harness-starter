@@ -1,9 +1,25 @@
 {
   "steps": [
-    { "name": "syntax", "run": "sh -n gate/worktree.sh && sh -n install.sh && python3 -I -m py_compile digest.py" },
-    { "name": "tests", "run": "node --test test/*.test.mjs" },
-    { "name": "status smoke", "run": "node cos.mjs status --no-gh > /dev/null" },
-    { "name": "wiki lint", "run": "node wiki.mjs lint" }
+    {
+      "name": "syntax",
+      "run": "sh -n gate/worktree.sh && sh -n install.sh && python3 -I -m py_compile digest.py"
+    },
+    {
+      "name": "tests",
+      "run": "node --test test/*.test.mjs"
+    },
+    {
+      "name": "status smoke",
+      "run": "node cos.mjs status --no-gh > /dev/null"
+    },
+    {
+      "name": "wiki lint",
+      "run": "node wiki.mjs lint"
+    },
+    {
+      "name": "security audit",
+      "run": "node gate/security-audit.mjs"
+    }
   ],
   "rules": [
     "Don't edit files inside the project repos listed in projects.json. The harness only reads them.",

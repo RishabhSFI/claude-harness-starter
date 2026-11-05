@@ -1,6 +1,7 @@
 reports/*.tmp
 __pycache__/
 .claude/loop/
+.claude/security-audit/
 mc/state/
 .claude/secrets-cache.json
 

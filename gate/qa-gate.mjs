@@ -8,6 +8,9 @@
 //   { "env": {...}, "steps": [{ "name", "run" }], "serve": "cmd -p {port}",
 //     "qa": "cmd {url}", "local": [untracked files], "rules": [lines],
 //     "tries": 5 }
+// A step can be the security audit: { "name": "security audit", "run": "node
+// ~/Projects/claude-harness/gate/security-audit.mjs" } (see security-audit.mjs).
+// Put it last: it can take 10 minutes of the hook's 30.
 // "serve" and "qa" are optional: QA runs against the served local build.
 // "rules" are project rules for the task (files not to touch, what not to run).
 //

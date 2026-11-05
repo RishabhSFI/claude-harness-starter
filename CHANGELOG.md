@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-11-05, harness 3d613e2
+
+- Cloudflare security audit: skill, gate step, PR rule and daily sweep (#5)
+- wiki: Phase 1 into main PR open
+- wiki: log security audit skill request
+- wiki: Matthew update page published
+- wiki: log Matthew meeting update request
+- wiki: owner skipped GitHub Pro for now
+- wiki: three changes waiting on the owner
+- Harness review 2026-11-05
+- Handoff for a fresh Chief of Staff hub
+- and 19 internal changes
+
 ## 2026-11-05, harness e09b255
 
 - Test fixtures: made-up project and secret names so the public starter ships nothing personal

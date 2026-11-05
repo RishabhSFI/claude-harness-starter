@@ -1,5 +1,5 @@
 #!/bin/sh
-# Links the cos, wiki and until-ready skills and global CLAUDE.md into ~/.claude and
+# Links the cos, wiki, until-ready and security-audit skills and global CLAUDE.md into ~/.claude and
 # registers the hooks: the wrong-folder warning (UserPromptSubmit) and the
 # until-ready gate (Stop). Safe to rerun. Pass --dry-run to only print actions.
 set -eu
@@ -55,6 +55,7 @@ link() {
 link "$HARNESS/skills/cos" "$CLAUDE_DIR/skills/cos" refuse
 link "$HARNESS/skills/wiki" "$CLAUDE_DIR/skills/wiki" refuse
 link "$HARNESS/skills/until-ready" "$CLAUDE_DIR/skills/until-ready" refuse
+link "$HARNESS/skills/security-audit" "$CLAUDE_DIR/skills/security-audit" refuse
 link "$HARNESS/global/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" warn
 link "$HARNESS/global/pstack-models.md" "$CLAUDE_DIR/pstack-models.md" warn
 

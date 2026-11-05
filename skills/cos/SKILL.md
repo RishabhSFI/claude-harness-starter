@@ -128,6 +128,10 @@ Don't stop to ask about routine choices; decide and list your decisions in
 the report. If the project has no .claude/gate.json, draft one from its
 real checks and commit it with the work.
 
+Before the PR, run `node <H>/gate/security-audit.mjs` (skip it if the gate
+has the step), fix confirmed high or critical findings, and list the rest in
+the PR under "Security audit".
+
 Keep this chat small: delegate building and long reads, don't end a turn
 just to say you're waiting, and stop once the PR is open. Size the review:
 Sonnet for small, low-risk diffs; Opus for large or risky ones.
@@ -251,6 +255,8 @@ review).
 shows `gate no` for a project with code, send a worker: "draft
 .claude/gate.json from this project's real checks (tests, lint, build, QA
 script), prove each step passes, commit it on a task branch, open a PR".
+Include the security audit as the last step of every gate you draft or review:
+`{"name": "security audit", "run": "node <H>/gate/security-audit.mjs"}`.
 
 ## Questions about the past
 

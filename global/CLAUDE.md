@@ -32,6 +32,13 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
   - Size reviews: a Sonnet reviewer for small, low-risk diffs (under about
     150 lines, no auth, money, data deletion or merge logic); an Opus
     reviewer for large or risky ones.
+- **Security audit before a PR.** Before opening a PR, run
+  `node ~/Projects/claude-harness/gate/security-audit.mjs` in the work folder.
+  Skip it when the project's gate already has the step, since the gate ran it.
+  Fix every confirmed high or critical finding. List everything else it found
+  in the PR under "Security audit", or write "Security audit: no findings".
+  Run the full six-phase audit (the `security-audit` skill, full audit mode)
+  only when the owner asks or before a project first goes public.
 - **Always review.** Nothing merges without an independent review (a
   pstack review subagent, or a different model) that didn't write the change.
   The PR says which reviewer ran and what it found. If none ran, run one
