@@ -20,7 +20,8 @@ What's in here:
 - `mc/`: mission control, a local page showing every project and a task
   queue (`node cos.mjs mc`).
 - `projects.json`: your project list, made empty on first run.
-  `projects.example.json` shows a filled-in one.
+  `projects.example.json` shows a filled-in one. Projects you stop working
+  on move to its `retired` list (`node cos.mjs retire <id>`).
 - `CHANGELOG.md`: what changed in each starter release.
 
 ## What you need

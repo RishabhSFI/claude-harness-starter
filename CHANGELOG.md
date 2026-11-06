@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-06, harness 2769429
+
+- feat(cos): retire, ff and learned commands; uptime and scheduled-task drift lines; batched merges in the hub (#8)
+- handoff: workflow cleanup ready
+- wiki: record the ten merged PRs on project pages
+- wiki: ten merges from the keep-the-work-going round
+- and 4 internal changes
+
 ## 2026-11-06, harness b91186e
 
 - Mission control: counts that agree, key checks cached in the background, stale chats hidden (#7)

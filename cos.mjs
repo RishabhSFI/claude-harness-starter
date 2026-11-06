@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { accessSync, constants as fsConstants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, uptime as osUptime } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_DESKTOP_DIR, DEFAULT_PROJECTS_DIR, findPaused, markResumed } from './limits.mjs';
 import { USER_FILES } from './starter-update.mjs';
+import { uptimeWarningOn } from './uptime.mjs';
 import { attachSecretsToStatus, parseSecrets, resolveSecrets, renderSecrets, secretsJson, writeSecretsPage } from './secrets.mjs';
 
 const SELF_DIR = dirname(fileURLToPath(import.meta.url));
@@ -22,7 +23,7 @@ const IGNORE_LINES = ['.claude/loop/', '.env', '.env.*', '!.env.example', 'node_
 export { USER_FILES };
 
 const DEFAULT_ROOT = '~/Projects';
-const VALUE_FLAGS = new Set(['registry', 'harness', 'what', 'root', 'owner', 'fake-prs', 'fake-merged', 'id', 'name', 'keywords', 'to', 'message', 'from', 'mark', 'paused-at', 'projects-dir', 'desktop-dir', 'marks-file', 'now']);
+const VALUE_FLAGS = new Set(['registry', 'harness', 'what', 'root', 'owner', 'fake-prs', 'fake-merged', 'id', 'name', 'keywords', 'to', 'message', 'from', 'mark', 'paused-at', 'projects-dir', 'desktop-dir', 'marks-file', 'now', 'fake-checks']);
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 const CLAUDE_MD = (name, what) => `# ${name}
@@ -60,27 +61,44 @@ function readRegistryRaw(file) {
   return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : { projects: [] };
 }
 
-/** @returns {Project[]} */
+function parseProject(p, where) {
+  if (typeof p?.id !== 'string' || typeof p?.name !== 'string' || !Array.isArray(p?.checkouts)) {
+    throw new Error(`${where} needs string id, string name, and a checkouts array`);
+  }
+  return {
+    id: p.id,
+    name: p.name,
+    what: typeof p.what === 'string' ? p.what : '',
+    checkouts: p.checkouts.map((c) => resolve(expandHome(String(c)))),
+    aliases: Array.isArray(p.aliases) ? p.aliases.map(String) : [],
+    keywords: Array.isArray(p.keywords) ? p.keywords.map(String) : [],
+    public: parsePublic(p.public),
+    repos: Array.isArray(p.repos) ? p.repos.map(String) : [],
+    site: typeof p.site === 'string' ? p.site : null,
+    secrets: parseSecrets(p.secrets, where),
+  };
+}
+
+/** Active projects only: every reader that goes through here skips the retired ones. */
 export function loadRegistry(file) {
   const raw = readRegistryRaw(file);
   if (!Array.isArray(raw?.projects)) throw new Error(`${file}: expected {"projects": [...]}`);
-  return raw.projects.map((p, i) => {
-    if (typeof p?.id !== 'string' || typeof p?.name !== 'string' || !Array.isArray(p?.checkouts)) {
-      throw new Error(`${file}: projects[${i}] needs string id, string name, and a checkouts array`);
-    }
-    return {
-      id: p.id,
-      name: p.name,
-      what: typeof p.what === 'string' ? p.what : '',
-      checkouts: p.checkouts.map((c) => resolve(expandHome(String(c)))),
-      aliases: Array.isArray(p.aliases) ? p.aliases.map(String) : [],
-      keywords: Array.isArray(p.keywords) ? p.keywords.map(String) : [],
-      public: parsePublic(p.public),
-      repos: Array.isArray(p.repos) ? p.repos.map(String) : [],
-      site: typeof p.site === 'string' ? p.site : null,
-      secrets: parseSecrets(p.secrets, `${file}: projects[${i}]`),
-    };
-  });
+  const projects = raw.projects.map((p, i) => parseProject(p, `${file}: projects[${i}]`));
+  loadRetired(file);
+  return projects;
+}
+
+/** Retired projects, for the places that still care: the starter's leak scan and `retire`. @returns {(Project & {retiredOn: string | null})[]} */
+export function loadRetired(file) {
+  const raw = readRegistryRaw(file);
+  if (raw.retired !== undefined && !Array.isArray(raw.retired)) throw new Error(`${file}: "retired" must be an array`);
+  const retired = (raw.retired ?? []).map((p, i) => ({ ...parseProject(p, `${file}: retired[${i}]`), retiredOn: typeof p.retiredOn === 'string' ? p.retiredOn : null }));
+  const seen = new Set((raw.projects ?? []).map((p) => String(p?.id).toLowerCase()));
+  for (const p of retired) {
+    if (seen.has(p.id.toLowerCase())) throw new Error(`${file}: project id "${p.id}" is in both projects and retired`);
+    seen.add(p.id.toLowerCase());
+  }
+  return retired;
 }
 
 class UsageError extends Error {}
@@ -430,12 +448,15 @@ function prSection(report, classification, heading) {
   return items.length ? [heading, '', ...items, ''] : [];
 }
 
-export function renderStatus(report) {
-  const needs = report.flatMap((p) =>
-    p.checkouts.flatMap((c) =>
-      c.attention.map((a) => `- **${p.name}**${p.checkouts.length > 1 ? ` (${basename(c.path)})` : ''}: ${a.message}`),
+export function renderStatus(report, notices = []) {
+  const needs = [
+    ...notices.map((n) => `- ${n}`),
+    ...report.flatMap((p) =>
+      p.checkouts.flatMap((c) =>
+        c.attention.map((a) => `- **${p.name}**${p.checkouts.length > 1 ? ` (${basename(c.path)})` : ''}: ${a.message}`),
+      ),
     ),
-  );
+  ];
   const lines = [
     '# Needs you',
     '',
@@ -499,6 +520,26 @@ const secretsCacheFor = (registryFile) => join(dirname(resolve(registryFile)), '
 
 const NO_PROJECTS = 'No projects yet. Register a folder with `node cos.mjs add <folder>`, or start one with `node cos.mjs new <slug> --what "..."`.';
 
+/** Installed scheduled task -> its prompt in this repo's scheduled/ folder. */
+const SCHEDULED_PROMPTS = { 'resume-paused-sessions': 'resume-paused.md', 'cos-morning-brief': 'morning-brief.md', 'daily-harness-review': 'daily-review.md' };
+
+const normalizePrompt = (text) => text.replaceAll(homedir(), '~').trim();
+
+/** The prompt of a scheduled/ file: everything below the first line that is only `---`. */
+const repoPrompt = (text) => text.slice(text.indexOf('\n---\n') + 5);
+
+/** Installed tasks whose prompt differs from the repo copy. A task that isn't installed is not drift. */
+export function scheduledDrift(scheduledDir, repoDir = join(SELF_DIR, 'scheduled')) {
+  return Object.entries(SCHEDULED_PROMPTS).flatMap(([name, file]) => {
+    const installed = join(scheduledDir, name, 'SKILL.md');
+    const source = join(repoDir, file);
+    if (!existsSync(installed) || !existsSync(source)) return [];
+    const body = readFileSync(installed, 'utf8').replace(/^---\n[\s\S]*?\n---\n/, '');
+    if (normalizePrompt(body) === normalizePrompt(repoPrompt(readFileSync(source, 'utf8')))) return [];
+    return [{ task: name, file: `scheduled/${file}`, message: `Scheduled task ${name} differs from scheduled/${file}; paste the new prompt in its settings (or have the hub update it).` }];
+  });
+}
+
 function cmdStatus(projects, flags, _positional, registryFile) {
   if (!projects.length && !flags.json) {
     console.log(NO_PROJECTS);
@@ -506,7 +547,12 @@ function cmdStatus(projects, flags, _positional, registryFile) {
   }
   const report = gatherStatus(projects, { useGh: !flags['no-gh'], fakePrs: flags['fake-prs'], fakeMerged: flags['fake-merged'] });
   attachSecretsToStatus(report, projects, { online: !flags['no-gh'], cached: flags['cached-secrets'] === true, gh: GH, cacheFile: secretsCacheFor(registryFile) });
-  console.log(flags.json ? JSON.stringify({ projects: report }, null, 2) : renderStatus(report));
+  const fakeUptime = process.env.COS_UPTIME_SEC;
+  const uptimeSec = Number(fakeUptime ?? osUptime());
+  const machine = { uptimeDays: Math.floor(uptimeSec / 86_400), warning: uptimeWarningOn(fakeUptime === undefined ? process.platform : 'darwin', uptimeSec) };
+  const drift = scheduledDrift(process.env.COS_SCHEDULED_DIR ?? join(homedir(), '.claude', 'scheduled-tasks'));
+  if (flags.json) console.log(JSON.stringify(projects.length ? { machine, scheduledDrift: drift, projects: report } : { projects: report }, null, 2));
+  else console.log(renderStatus(report, [machine.warning, ...drift.map((d) => d.message)].filter(Boolean)));
 }
 
 function cmdSecrets(projects, flags, _positional, registryFile) {
@@ -670,7 +716,7 @@ function refuseReason(s, adopt) {
   return null;
 }
 
-const idTaken = (raw, slug) => raw.projects.some((p) => String(p.id).toLowerCase() === slug);
+const idTaken = (raw, slug) => [...raw.projects, ...(raw.retired ?? [])].some((p) => String(p.id).toLowerCase() === slug);
 
 function writeRegistry(file, raw) {
   const tmp = `${file}.tmp`;
@@ -800,14 +846,163 @@ function cmdAdd(flags, positional, registryFile) {
   console.log(`Next: fill in "public" for ${slug} in ${tilde(registryFile)}: the branches, remotes and notes (deploy commands, emails) that make it public. The Chief of Staff merges and deploys anything not listed there on its own.`);
 }
 
-function cmdRoute(projects, flags, positional) {
-  const scores = scoreProjects(projects, positional.join(' '));
+function cmdRoute(projects, flags, positional, registryFile) {
+  const text = positional.join(' ');
+  const scores = scoreProjects(projects, text);
   const best = bestProject(scores);
+  const retired = scores.every((s) => s.score === 0) ? bestProject(scoreProjects(loadRetired(registryFile), text)) : null;
   if (flags.json) {
     const out = { match: best?.id ?? null, path: best?.checkouts[0] ?? null };
+    if (retired) out.retired = retired.id;
     out.scores = Object.fromEntries(scores.map((s) => [s.project.id, s.score]));
     console.log(JSON.stringify(out, null, 2));
-  } else console.log(best ? `${best.id}\t${best.checkouts[0]}` : 'none');
+  } else if (retired) console.log(`${retired.name} is retired (projects.json \`retired\`)`);
+  else console.log(best ? `${best.id}\t${best.checkouts[0]}` : 'none');
+}
+
+/** Moves a project to `retired`. There is no restore command: move it back by hand. */
+function cmdRetire(flags, positional, registryFile) {
+  const key = normalize(positional[0] ?? '');
+  if (!key) throw new UsageError('usage: cos.mjs retire <id or alias>');
+  const raw = readRegistryRaw(registryFile);
+  const all = [...raw.projects, ...(raw.retired ?? [])];
+  const byId = all.filter((p) => normalize(String(p.id)) === key);
+  const byAlias = all.filter((p) => (p.aliases ?? []).some((t) => normalize(String(t)) === key));
+  const found = byId.length ? byId : byAlias;
+  if (found.length > 1) {
+    console.error(`cos: "${positional[0]}" matches more than one project (${found.map((p) => p.id).join(', ')}). Use the id.`);
+    process.exitCode = 1;
+    return;
+  }
+  const [hit] = found;
+  if (hit && (raw.retired ?? []).includes(hit)) return console.log(`${hit.name} is already retired.`);
+  const at = hit ? raw.projects.indexOf(hit) : -1;
+  if (at < 0) {
+    console.error(`cos: no project "${positional[0]}". Known ids: ${raw.projects.map((p) => p.id).join(', ') || '(none)'}`);
+    process.exitCode = 1;
+    return;
+  }
+  const [project] = raw.projects.splice(at, 1);
+  raw.retired = [...(raw.retired ?? []), { ...project, retiredOn: localDate(new Date()) }];
+  writeRegistry(registryFile, raw);
+  console.log(`retired ${project.name} (${project.id}). To bring it back, move its entry from "retired" to "projects" in ${tilde(registryFile)} by hand.`);
+}
+
+const LEARNED_HEADING = /^## What the last hub learned.*$/m;
+
+/** The "What the last hub learned" section of the newest handoff, else the newest other cos report that has one. */
+function cmdLearned(flags) {
+  const dir = join(flags.harness ? resolve(String(flags.harness)) : SELF_DIR, 'reports');
+  const names = existsSync(dir) ? readdirSync(dir).filter((n) => /^cos-(handoff-)?\d{4}-\d{2}-\d{2}\.md$/.test(n)) : [];
+  const newestFirst = (list) => list.sort().reverse();
+  const handoffs = newestFirst(names.filter((n) => /^cos-handoff-\d{4}-\d{2}-\d{2}\.md$/.test(n)));
+  for (const name of [...handoffs, ...newestFirst(names.filter((n) => !handoffs.includes(n)))]) {
+    const text = readFileSync(join(dir, name), 'utf8');
+    const start = text.search(LEARNED_HEADING);
+    if (start < 0) continue;
+    const rest = text.slice(start);
+    const end = rest.slice(1).search(/^## /m);
+    console.log((end < 0 ? rest : rest.slice(0, end + 1)).trim());
+    return;
+  }
+}
+
+const shellQuote = (s) => (/^[\w./@%+=:,~-]+$/.test(s) ? s : `'${s.replaceAll("'", "'\\''")}'`);
+
+/** `~` only expands unquoted, so a home-relative path keeps `~/` bare and quotes the rest. */
+const shellPath = (p) => {
+  const home = homedir();
+  if (p === home) return '~';
+  return p.startsWith(home + sep) ? `~/${shellQuote(p.slice(home.length + 1))}` : shellQuote(p);
+};
+
+/**
+ * Check runs and commit statuses for a commit, in one shape: [{name, state}] with state ok, failing or pending.
+ * `--fake-checks <file>` stands in for gh: {"check_runs": [{name, status, conclusion}], "statuses": [{context, state}]}.
+ * @returns {{ok: true, checks: {name: string, state: 'ok' | 'failing' | 'pending', ran: boolean}[]} | {ok: false, why: string}}
+ */
+function readChecks(folder, sha, fakeFile) {
+  let runs;
+  let statuses;
+  if (fakeFile) {
+    ({ check_runs: runs = [], statuses = [] } = JSON.parse(readFileSync(fakeFile, 'utf8')));
+  } else {
+    const origin = git(folder, 'remote', 'get-url', 'origin');
+    const repo = origin.ok ? githubRepoOf(origin.out) : null;
+    if (!repo) return { ok: false, why: 'origin is not a GitHub repo' };
+    const api = (path, jq) => run(GH, ['api', `repos/${repo}/commits/${sha}/${path}`, '--paginate', '--jq', jq], folder, GH_TIMEOUT_MS);
+    const a = api('check-runs', '.check_runs[] | {name, status, conclusion}');
+    const b = api('status', '.statuses[] | {context, state}');
+    if (!a.ok || !b.ok) return { ok: false, why: (a.err || b.err).split('\n')[0] || 'gh failed' };
+    const lines = (r) => r.out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    runs = lines(a);
+    statuses = lines(b);
+  }
+  const runState = (r) => (r.status !== 'completed' ? 'pending' : SUCCESS_CHECK.has(String(r.conclusion).toUpperCase()) ? 'ok' : 'failing');
+  const statusState = (st) => (st.state === 'success' ? 'ok' : st.state === 'pending' ? 'pending' : 'failing');
+  const skipped = (r) => r.status === 'completed' && ['NEUTRAL', 'SKIPPED'].includes(String(r.conclusion).toUpperCase());
+  return {
+    ok: true,
+    checks: [
+      ...runs.map((r) => ({ name: r.name, state: runState(r), ran: !skipped(r) })),
+      ...statuses.map((st) => ({ name: st.context, state: statusState(st), ran: true })),
+    ],
+  };
+}
+
+/**
+ * Hands the owner one command that fast-forwards <target> to <sync>. The repos are squash-only, so a long-lived
+ * branch catches up with main through a sync branch a worker built, never through a merge here.
+ */
+function cmdFf(projects, flags, positional) {
+  const [folderArg, sync, target] = positional;
+  if (!folderArg || !sync || !target) throw new UsageError('usage: cos.mjs ff <repo-folder> <sync-branch> <target-branch> [--json]');
+  const result = { ready: false, reason: '', command: null, commits: 0, checksRan: false, checks: [] };
+  const finish = (reason, code = 1) => {
+    result.reason = reason;
+    if (flags.json) console.log(JSON.stringify(result, null, 2));
+    else console.log(result.ready ? `${reason}\n${result.command}` : reason);
+    process.exitCode = code;
+  };
+  const folder = resolve(expandHome(folderArg));
+  if (!existsSync(folder)) return finish(`${tilde(folder)} does not exist.`);
+  if (!existsSync(join(folder, '.git'))) return finish(`${tilde(folder)} is not a git repo.`);
+  for (const b of [sync, target]) {
+    if (!git(folder, 'check-ref-format', '--branch', b).ok) return finish(`"${b}" is not a valid branch name.`);
+  }
+  const fetched = run('git', ['-C', folder, 'fetch', 'origin', '--quiet'], undefined, 60_000);
+  if (!fetched.ok) return finish(`Could not fetch origin: ${fetched.err.split('\n')[0] || 'unknown error'}`);
+  // Full refs: a local branch or tag named origin/<b> must not shadow the remote one.
+  const ref = (b) => `refs/remotes/origin/${b}`;
+  const sha = (b) => git(folder, 'rev-parse', '--verify', '--quiet', `${ref(b)}^{commit}`);
+  const [syncSha, targetSha] = [sha(sync), sha(target)];
+  for (const [b, r] of [[sync, syncSha], [target, targetSha]]) if (!r.ok) return finish(`origin/${b} does not exist.`);
+  if (syncSha.out === targetSha.out) return finish(`${target} is already up to date with ${sync}.`, 0);
+  if (!git(folder, 'merge-base', '--is-ancestor', ref(target), ref(sync)).ok) {
+    return finish(`${target} has commits ${sync} lacks; rebuild the sync branch from origin/${target}.`);
+  }
+  result.commits = Number(git(folder, 'rev-list', '--count', `${ref(target)}..${ref(sync)}`).out);
+  const read = readChecks(folder, syncSha.out, flags['fake-checks']);
+  if (!read.ok) return finish(`Could not read the checks on ${sync} (${read.why}), so not handing over a command.`);
+  result.checks = read.checks;
+  result.checksRan = read.checks.some((c) => c.ran);
+  const named = (state) => read.checks.filter((c) => c.state === state).map((c) => c.name);
+  if (named('failing').length) return finish(`Checks failing on ${sync}: ${named('failing').join(', ')}.`);
+  if (named('pending').length) return finish(`Checks still running on ${sync}: ${named('pending').join(', ')}.`);
+  const project = projects.find((p) => p.checkouts.some((c) => canonical(c) === canonical(folder)));
+  const publicBranches = project?.public ? project.public.branches : [defaultBranchOf(folder) ?? 'main'];
+  const isPublic = publicBranches.includes(target);
+  if (!result.checksRan && isPublic) return finish(`No checks ran on ${sync}; push it where CI runs (or open a draft PR), then rerun cos ff.`);
+  const lines = [];
+  if (!result.checksRan) lines.push(`No checks ran on ${sync}.`);
+  lines.push(`Moves ${result.commits} commit${result.commits === 1 ? '' : 's'}.`);
+  if (isPublic) lines.push(`${target} is public${project ? ` (${describePublic(project.public)})` : ''}, so this is a go-live step.`);
+  result.ready = true;
+  const moved = shellQuote(`${sync} moved since cos ff checked it; rerun cos ff`);
+  result.command =
+    `cd ${shellPath(folder)} && git fetch origin && { [ "$(git rev-parse ${shellQuote(ref(sync))})" = ${syncSha.out} ] || { echo ${moved}; false; }; }` +
+    ` && git push origin ${shellQuote(ref(sync))}:${shellQuote(`refs/heads/${target}`)}`;
+  finish(lines.join(' '), 0);
 }
 
 function cmdHook(projects, flags) {
@@ -848,6 +1043,11 @@ function main() {
     return;
   }
 
+  if (command === 'learned') {
+    cmdLearned(flags);
+    return;
+  }
+
   if (command === 'publish-starter' || command === 'update') {
     const file = command === 'update' ? 'starter-update.mjs' : 'make-starter.mjs';
     runStarterCommand(file, command, { flags, positional, harness: SELF_DIR }).catch((e) => refuse(e.message, 1));
@@ -856,7 +1056,7 @@ function main() {
 
   if (!flags.registry && command !== 'hook') ensureUserFiles(SELF_DIR);
 
-  const writers = { new: cmdNew, add: cmdAdd };
+  const writers = { new: cmdNew, add: cmdAdd, retire: cmdRetire };
   if (writers[command]) {
     try {
       writers[command](flags, positional, registryFile);
@@ -880,9 +1080,9 @@ function main() {
     return;
   }
 
-  const commands = { status: cmdStatus, route: cmdRoute, secrets: cmdSecrets, paused: cmdPaused };
+  const commands = { status: cmdStatus, route: cmdRoute, secrets: cmdSecrets, paused: cmdPaused, ff: cmdFf };
   if (!commands[command]) {
-    console.error('usage: cos.mjs status [--json] [--no-gh] [--cached-secrets] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | route "<text>" [--json] | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | mc [--port 4747] | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run]   (--registry <path>)');
+    console.error('usage: cos.mjs status [--json] [--no-gh] [--cached-secrets] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | retire <id> | route "<text>" [--json] | ff <folder> <sync-branch> <target-branch> [--json] | learned | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | mc [--port 4747] | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run]   (--registry <path>)');
     process.exitCode = 2;
     return;
   }

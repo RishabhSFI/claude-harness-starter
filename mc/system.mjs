@@ -4,6 +4,7 @@ import { basename, win32 as winPath } from 'node:path';
 import { clean } from './activity.mjs';
 import { exec as defaultExec } from './actions.mjs';
 import { projectOfPath } from './queue.mjs';
+import { uptimeWarningOn } from '../uptime.mjs';
 
 export const THRESHOLDS = {
   cpuPct: 90,
@@ -458,6 +459,10 @@ export const ALERTS = [
       const low = (sys.disks ?? []).filter((d) => d.freePct < THRESHOLDS.diskFreePct);
       return low.length ? low.map((d) => `Disk under ${THRESHOLDS.diskFreePct}% free on ${d.mount}: ${gb(d.freeBytes)} left.`).join(' ') : null;
     },
+  },
+  {
+    id: 'uptime',
+    check: (sys) => uptimeWarningOn(sys.platform ?? 'darwin', sys.machine?.uptimeSec),
   },
   {
     id: 'dev-servers',
