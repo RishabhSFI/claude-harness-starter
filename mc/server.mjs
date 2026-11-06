@@ -15,7 +15,7 @@ import { hiddenFrom, seenFrom } from './moves.mjs';
 import { loadMap, saveMap } from './move-state.mjs';
 import * as q from './queue.mjs';
 import { loadLinks, parseRequests, saveLinks, setLink } from './requests.mjs';
-import { cachedSecrets } from '../secrets.mjs';
+import { attachSecretsToStatus, CACHE_MAX_AGE_MS, cachedSecrets } from '../secrets.mjs';
 import { buildSnapshot, prRef, readSweep } from './snapshot.mjs';
 import { canStop, createSystemSampler, folderTargets, REFUSALS } from './system.mjs';
 import { createUsageTracker } from './usage.mjs';
@@ -219,6 +219,8 @@ export function createMissionControl(opts) {
     launchingId: null,
     closed: false,
     statusRun: null,
+    secretsRun: null,
+    secretsFailedAt: 0,
     sessionsRun: null,
     sessionsAgain: false,
     prLookups: new Set(),
@@ -354,16 +356,7 @@ export function createMissionControl(opts) {
           }));
         }
         for (const key of [...s.qaDetails.keys()]) if (!wanted.has(key)) s.qaDetails.delete(key);
-        try {
-          const missing = {};
-          for (const r of cachedSecrets(projects, { cacheFile: files.secretsCache })) {
-            const names = r.secrets.filter((x) => x.required && x.status === 'missing').map((x) => x.name);
-            if (names.length) missing[r.id] = names;
-          }
-          s.missingKeys = missing;
-        } catch (e) {
-          log(`secrets cache read failed: ${e.message}`);
-        }
+        readMissingKeys();
         s.errors.qa = failed ? `Couldn't read ${failed}` : null;
         s.qaVersion += 1;
       } catch (e) {
@@ -375,6 +368,55 @@ export function createMissionControl(opts) {
       publish();
     })();
     return s.qaRun;
+  }
+
+  function readMissingKeys() {
+    try {
+      const missing = {};
+      for (const r of cachedSecrets(projects, { cacheFile: files.secretsCache })) {
+        const names = r.secrets.filter((x) => x.required && x.status === 'missing').map((x) => x.name);
+        if (names.length) missing[r.id] = names;
+      }
+      s.missingKeys = missing;
+    } catch (e) {
+      log(`secrets cache read failed: ${e.message}`);
+    }
+  }
+
+  function secretsOld(now = Date.now()) {
+    const at = Date.parse(secretsCheckedAt(files.secretsCache) ?? '');
+    return !Number.isFinite(at) || at > now || now - at >= CACHE_MAX_AGE_MS;
+  }
+
+  /** A check that left no fresh answers (say the cache can't be written) waits 30 min before the next automatic one, so it never runs every poll. */
+  const secretsStale = (now = Date.now()) => secretsOld(now) && now - s.secretsFailedAt >= CACHE_MAX_AGE_MS;
+
+  /** Takes the saved key answers into the status report and the QA cards without running any check. */
+  function applySecrets() {
+    s.secretsAt = secretsCheckedAt(files.secretsCache);
+    if (s.status?.projects) attachSecretsToStatus(s.status.projects, projects, { cached: true, cacheFile: files.secretsCache });
+    readMissingKeys();
+    s.qaVersion += 1;
+  }
+
+  /** One key check at a time, in the background; `force` runs it even when the saved answers are fresh. */
+  function refreshSecrets({ force = false } = {}) {
+    if (s.secretsRun) return s.secretsRun;
+    if (!force && !secretsStale()) return null;
+    s.secretsRun = (async () => {
+      const r = await actions.exec(process.execPath, [join(HARNESS_DIR, 'cos.mjs'), 'secrets', '--json', '--registry', registryFile], { timeout: 180_000 });
+      if (!r.ok) log(`secrets check failed: ${(r.err || 'cos secrets failed').split('\n')[0]}`);
+      s.secretsFailedAt = secretsOld() ? Date.now() : 0;
+      try {
+        applySecrets();
+      } catch (e) {
+        log(`secrets cache read failed: ${e.message}`);
+      }
+      s.secretsRun = null;
+      publish();
+    })();
+    publish();
+    return s.secretsRun;
   }
 
   function snapshot() {
@@ -400,7 +442,7 @@ export function createMissionControl(opts) {
       seen: s.seen,
       hidden: s.hidden,
       system: system?.snapshot() ?? null,
-      meta: { errors: s.errors, statusAt: s.at.status, sweepAt: s.at.sweep, claudeFound: Boolean(ctx.claudeBin), paths, leftover: leftover() },
+      meta: { errors: s.errors, secretsRunning: Boolean(s.secretsRun), statusAt: s.at.status, sweepAt: s.at.sweep, claudeFound: Boolean(ctx.claudeBin), paths, leftover: leftover() },
     });
     snap.workMap.rows = snap.workMap.rows.map((r) => ({ ...r, queued: queuedFor.has(r.id) }));
     syncMoveState(snap.moves);
@@ -571,13 +613,14 @@ export function createMissionControl(opts) {
   }
 
   function refreshStatus() {
+    void refreshSecrets();
     if (s.statusRun) return s.statusRun;
     s.statusRun = (async () => {
-      const r = await actions.exec(process.execPath, [join(HARNESS_DIR, 'cos.mjs'), 'status', '--json', '--registry', registryFile], { timeout: 180_000 });
+      const r = await actions.exec(process.execPath, [join(HARNESS_DIR, 'cos.mjs'), 'status', '--json', '--cached-secrets', '--registry', registryFile], { timeout: 180_000 });
       try {
         if (!r.ok) throw new Error((r.err || 'cos status failed').split('\n')[0]);
         s.status = JSON.parse(r.out);
-        s.secretsAt = secretsCheckedAt(files.secretsCache);
+        applySecrets();
         s.errors.status = null;
         s.at.status = new Date().toISOString();
         await settleClosedPrs();
@@ -871,6 +914,13 @@ export function createMissionControl(opts) {
       },
     },
     {
+      path: /^\/api\/secrets\/refresh$/,
+      run: () => {
+        void refreshSecrets({ force: true });
+        return { ok: true, running: true };
+      },
+    },
+    {
       path: /^\/api\/refresh$/,
       run: () => {
         refreshStatus();
@@ -946,6 +996,7 @@ export function createMissionControl(opts) {
     lockFile: files.lock,
     tick,
     refreshStatus,
+    refreshSecrets,
     refreshSessions,
     refreshLimitPauses,
     async listen() {
@@ -975,11 +1026,11 @@ export function createMissionControl(opts) {
     async close() {
       s.closed = true;
       for (const t of timers) clearInterval(t);
-      await Promise.all([s.launching, s.statusRun, s.sessionsRun, usage.stop(), system?.stop()]);
+      await Promise.all([s.launching, s.statusRun, s.secretsRun, s.sessionsRun, usage.stop(), system?.stop()]);
       for (const res of clients) res.end();
       clients.clear();
       await new Promise((done) => server.close(() => done()));
-      await Promise.allSettled([s.sessionsRun, s.statusRun, s.qaRun]);
+      await Promise.allSettled([s.sessionsRun, s.statusRun, s.secretsRun, s.qaRun]);
       dropLock(files.lock);
     },
   };

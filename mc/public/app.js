@@ -424,6 +424,16 @@ function moveButton(m, box) {
   return null;
 }
 
+function recheckKeysButton() {
+  const running = Boolean(state.meta?.secretsRunning);
+  const b = h('button', { type: 'button', class: 'btn ghost', disabled: running }, running ? 'Checking…' : 'Check keys again');
+  b.onclick = async () => {
+    b.disabled = true;
+    await act('/api/secrets/refresh');
+  };
+  return b;
+}
+
 function moveExtra(m) {
   const a = m.action;
   if (a.type === 'copy') return codeBox(a.text);
@@ -436,7 +446,7 @@ function moveExtra(m) {
         return h('li', {}, h('div', { class: 'k-top' }, h('strong', { class: 'k-name' }, k.name), k.purpose ? h('span', { class: 'muted' }, k.purpose) : null, several ? copyBtn('Copy', k.command, cmd, 'ghost') : null), cmd);
       }),
     ),
-    h('div', { class: 'meta' }, a.place, a.href ? [' · ', extLink('Open the page', safeHref(a.href))] : null, m.checkedAt ? ` · checked ${ago(m.checkedAt)}` : null),
+    h('div', { class: 'meta' }, a.place, a.href ? [' · ', extLink('Open the page', safeHref(a.href))] : null, m.checkedAt ? ` · checked ${ago(m.checkedAt)}` : null, ' · ', recheckKeysButton()),
   );
 }
 
@@ -449,7 +459,7 @@ function moveRow(m) {
   const extra = moveExtra(m);
   const button = moveButton(m, extra?.matches('code') ? extra : extra?.querySelector('code'));
   const checks = m.action.type === 'merge' && m.action.checksText ? chip(`Checks: ${m.action.checksText}`, m.action.green ? 'ok' : /failing/.test(m.action.checksText) ? 'bad' : 'warn') : null;
-  const hide = h('button', {
+  const hide = m.hiddenWhy ? h('span', { class: 'muted' }, m.hiddenWhy) : h('button', {
     type: 'button',
     class: 'hide-btn',
     title: m.hidden ? 'Put this move back in the list' : 'Hide this move until something about it changes',
@@ -483,7 +493,7 @@ function renderMoves() {
     renderMoves();
   };
   const rows = showHiddenMoves ? [...visible, ...hidden] : visible;
-  const key = JSON.stringify(rows);
+  const key = JSON.stringify([rows, state.meta?.secretsRunning]);
   if (ui.movesKey === key) return;
   ui.movesKey = key;
   const items = [];
@@ -530,19 +540,19 @@ function renderRunning() {
   if (!r) return;
   const host = $('running');
   if (host.contains(document.activeElement) && host.querySelector('form')) return;
-  const key = JSON.stringify([r, state.projects.map((p) => p.id)]);
+  const key = JSON.stringify([r, state.projects.map((p) => p.id), (state.moves ?? []).filter((m) => !m.hidden).length]);
   if (ui.runKey === key) return;
   ui.runKey = key;
-  const counts = [r.waiting ? `${r.waiting} waiting on you` : null, r.stalled ? `${r.stalled} stopped` : null].filter(Boolean);
+  const waiting = (state.moves ?? []).filter((m) => !m.hidden).length;
   if (!r.running) {
     host.replaceChildren(h('div', { class: 'nudge' },
-      h('div', { class: 'nudge-text' }, h('strong', {}, 'Nothing is running.'), counts.length ? h('span', { class: 'muted' }, ` ${counts.join(', ')}.`) : null),
+      h('div', { class: 'nudge-text' }, h('strong', {}, 'Nothing is running.'), waiting ? h('span', { class: 'muted' }, ` ${waiting} waiting on you.`) : null),
       r.next ? btn(r.next.label, () => startNext(r.next.action), 'primary') : startForm(),
     ));
     return;
   }
   host.replaceChildren(h('div', { class: 'run-strip' },
-    h('div', { class: 'run-line' }, h('strong', {}, `${r.running} running`), counts.flatMap((c) => [' · ', c])),
+    h('div', { class: 'run-line' }, h('strong', {}, `${r.running} running`), waiting ? ` · ${waiting} waiting on you` : null),
     r.idleProjects.length ? h('div', { class: 'run-idle' }, h('span', { class: 'muted' }, 'Nothing running in'), ...r.idleProjects.map((p) => chip(p.name))) : null,
   ));
 }

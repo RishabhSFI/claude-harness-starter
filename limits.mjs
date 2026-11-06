@@ -274,6 +274,7 @@ export function desktopChats(dir) {
       localId: str(raw.sessionId) ?? basename(path, '.json'),
       cliId: str(raw.cliSessionId) ?? str(raw.lastAssistantCliSessionId),
       cwd: str(raw.cwd),
+      spawnedFrom: str(raw.spawnedFrom?.sessionId),
       title: str(raw.title),
       archived: raw.isArchived === true,
       scheduledTaskId: str(raw.scheduledTaskId),

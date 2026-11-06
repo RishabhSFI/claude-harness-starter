@@ -271,7 +271,7 @@ export function buildSnapshot({ projects, roots, status, sessions, tasks, settin
     sessions: groupSessions(sessions, projects, roots, tasks),
     lanes,
     queue,
-    moves: buildMoves({ ...parts, lanes, qaCards, secrets, secretsAt, seen, hidden }),
+    moves: buildMoves({ ...parts, roots, lanes, qaCards, secrets, secretsAt, seen, hidden }),
     running: buildRunning(parts),
     sessionStates: sessionStates(work, desktop, now),
     fromReview: sweep ? { file: sweep.file, date: sweep.date, items: sweep.items } : null,

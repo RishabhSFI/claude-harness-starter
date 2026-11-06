@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-06, harness b91186e
+
+- Mission control: counts that agree, key checks cached in the background, stale chats hidden (#7)
+- wiki: audit rollout PRs open
+- wiki: keep-the-work-going workers
+- wiki: Codex starter tabled; Mac restarted
+- wiki: Codex starter sent as a zip
+- wiki: Mac out of network ports after 186 days uptime
+- wiki: log Codex starter request
+- wiki: new mission control merged and published
+- and 2 internal changes
+
 ## 2026-11-06, harness da09fb4
 
 - Mission control: your moves first, and a push to keep work running (#6)

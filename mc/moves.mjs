@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { clean } from './activity.mjs';
 import { askedToIso } from './qa.mjs';
+import { projectOfPath } from './queue.mjs';
 
 /**
  * @typedef {{ type: 'merge', repo: string, number: number, base: string | null, live: boolean, green: boolean | null, checksText: string | null }
@@ -12,8 +13,8 @@ import { askedToIso } from './qa.mjs';
  *   | { type: 'unpause' }
  *   | { type: 'link', href: string, label: string }} Action
  * @typedef {{ id: string, kind: keyof typeof KINDS, label: string, project: string | null, projectName: string, title: string, why: string, since: string,
- *   group: string, first: string | null, firstNote: string | null, action: Action, detail: string[], version: string, hidden: boolean, checkedAt: string | null }} Move
- * @typedef {{ running: number, waiting: number, stalled: number, idleProjects: Array<{ id: string, name: string, next: string | null }>,
+ *   group: string, first: string | null, firstNote: string | null, action: Action, detail: string[], version: string, hidden: boolean, hiddenWhy?: string, checkedAt: string | null }} Move
+ * @typedef {{ running: number, idleProjects: Array<{ id: string, name: string, next: string | null }>,
  *   next: { action: object, label: string } | null }} Running
  */
 
@@ -33,6 +34,8 @@ export const KINDS = {
 
 /** A move another move names as `first` ranks this far above its dependent's tier. */
 const PREREQUISITE_STEP = 0.5;
+/** A chat quiet this long that is not the Chief of Staff's project work drops out of the list on its own. */
+const STALE_CHAT_MS = 24 * 3600e3;
 const RESUME_TITLE = /^resume paused sessions\b/i;
 const CHAT_ID = /^local_[A-Za-z0-9-]{1,64}$/;
 
@@ -255,8 +258,9 @@ function rowMoves({ requests, projects, now, covered }) {
   return out;
 }
 
-function chatAnswerMoves(classes, desktop, projects) {
+function chatAnswerMoves(classes, desktop, projects, roots, now) {
   const live = new Map([...classes.values()].filter((c) => c.chat).map((c) => [c.chat.localId, c.w]));
+  const staleStranger = (c) => now.getTime() - ms(c.lastActivityAt) > STALE_CHAT_MS && (!projectOfPath(roots, c.cwd) || !c.spawnedFrom);
   return desktop
     .filter((c) => c.status === 'blocked' && c.needsAction && !c.archived && !RESUME_TITLE.test(c.title ?? '') && chatLink(c.localId))
     .map((c) => ({
@@ -270,6 +274,7 @@ function chatAnswerMoves(classes, desktop, projects) {
       action: { type: 'open-chat', href: chatLink(c.localId) },
       detail: [],
       version: hash(c.localId, c.needsAction, c.lastActivityAt),
+      ...(staleStranger(c) && { hiddenWhy: 'Quiet for over a day, not project work.' }),
     }));
 }
 
@@ -343,7 +348,7 @@ function linkRows({ requests, keys, merges, now }) {
  * `seen` maps move id to when it first appeared; `hidden` maps move id to the version the owner hid.
  * @returns {Move[]}
  */
-export function buildMoves({ work = [], queue = null, settings = {}, lanes = [], qaCards = [], requests = [], secrets = [], secretsAt = null, desktop = [], projects = [], seen = {}, hidden = {}, now = new Date() }) {
+export function buildMoves({ work = [], queue = null, settings = {}, lanes = [], qaCards = [], requests = [], secrets = [], secretsAt = null, desktop = [], projects = [], roots = [], seen = {}, hidden = {}, now = new Date() }) {
   const classes = classifyWork(work, desktop, now);
   const queueSessions = new Set(work.filter((w) => w.taskId).map((w) => w.sessionId));
   const merges = mergeMoves({ lanes, qaCards, projects });
@@ -356,7 +361,7 @@ export function buildMoves({ work = [], queue = null, settings = {}, lanes = [],
     ...merges,
     ...keys.map((k) => ({ ...k, since: sinceByKey.get(k.id) ?? null })),
     ...rowMoves({ requests, projects, now, covered }),
-    ...chatAnswerMoves(classes, desktop, projects),
+    ...chatAnswerMoves(classes, desktop, projects, roots, now),
   ].map((m) => ({
     first: null,
     firstNote: null,
@@ -365,7 +370,7 @@ export function buildMoves({ work = [], queue = null, settings = {}, lanes = [],
     label: KINDS[m.kind].label,
     group: KINDS[m.kind].label,
     since: oldest(seen[m.id], m.since) ?? now.toISOString(),
-    hidden: hidden[m.id] === m.version,
+    hidden: Boolean(m.hiddenWhy) || hidden[m.id] === m.version,
   }));
   return rank(all).map((m) => Object.fromEntries(Object.entries(m).filter(([k]) => !k.startsWith('_'))));
 }
@@ -389,14 +394,13 @@ function rank(moves) {
  */
 export function buildRunning({ work = [], queue = null, settings = {}, desktop = [], projects = [], requests = [], now = new Date() }) {
   const classes = [...classifyWork(work, desktop, now).values()];
-  const count = (state) => classes.filter((c) => c.state === state).length;
-  const running = count('running');
+  const running = classes.filter((c) => c.state === 'running').length;
   const busyIn = new Set(classes.filter((c) => c.state === 'running').map((c) => c.w.project));
   const waiting = queue?.waiting ?? [];
   const idleProjects = projects
     .filter((p) => !busyIn.has(p.id))
     .map((p) => ({ id: p.id, name: p.name, next: waiting.find((t) => t.project === p.id)?.title ?? null }));
-  return { running, waiting: count('waiting'), stalled: count('stalled'), idleProjects, next: running ? null : nextStart({ waiting, settings, requests, projects }) };
+  return { running, idleProjects, next: running ? null : nextStart({ waiting, settings, requests, projects }) };
 }
 
 function nextStart({ waiting, settings, requests, projects }) {

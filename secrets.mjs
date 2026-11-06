@@ -21,7 +21,7 @@ function cli(cmd, args, cwd) {
     timeout: CLI_TIMEOUT_MS,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, CI: '1', NO_COLOR: '1' },
+    env: { ...process.env, CI: '1', NO_COLOR: '1', VERCEL_TELEMETRY_DISABLED: '1', NO_UPDATE_NOTIFIER: '1' },
   });
   const name = tilde(cmd).split('/').pop();
   if (r.error) return { ok: false, out: '', reason: r.error.code === 'ETIMEDOUT' ? `${name} timed out` : `${name} could not run: ${r.error.message}` };
@@ -270,7 +270,7 @@ function overlayCache(results, projects, cached) {
     r.secrets = r.secrets.map((res, i) => {
       const spec = project.secrets[i];
       const hit = KINDS[spec.target.kind].network ? cached[cacheKey(project, spec)] : null;
-      return hit ? { name: res.name, where: res.where, purpose: res.purpose, required: res.required, status: hit.status, ...(hit.add && { add: hit.add }) } : res;
+      return hit ? { name: res.name, where: res.where, purpose: res.purpose, required: res.required, status: hit.status, ...(hit.reason && { reason: hit.reason }), ...(hit.add && { add: hit.add }) } : res;
     });
   }
   return results;
@@ -291,8 +291,8 @@ export function cachedSecrets(projects, { cacheFile, ...opts } = {}) {
 
 /**
  * The online checks, reusing results under 30 minutes old unless `refresh`. Offline never reads the cache.
- * The cache file holds names, statuses, reasons and add commands for present or missing network secrets, never CLI output.
- * Unknown results are not cached, so a fixed login is noticed on the next run.
+ * The cache file holds names, statuses, reasons and add commands for network secrets, never CLI output.
+ * Unknown results are cached too, so an unlinked project is not re-checked every run; `refresh` notices a fix sooner.
  */
 export function resolveSecrets(projects, { online = true, refresh = false, cacheFile, now = Date.now(), ...opts } = {}) {
   if (!online) return checkSecrets(projects, { ...opts, online: false });
@@ -304,7 +304,7 @@ export function resolveSecrets(projects, { online = true, refresh = false, cache
     const entries = {};
     for (const { p, s } of network) {
       const res = results.find((r) => r.id === p.id).secrets[p.secrets.indexOf(s)];
-      if (res.status !== 'unknown') entries[cacheKey(p, s)] = { status: res.status, ...(res.add && { add: res.add }) };
+      entries[cacheKey(p, s)] = { status: res.status, ...(res.reason && { reason: res.reason }), ...(res.add && { add: res.add }) };
     }
     try {
       mkdirSync(dirname(cacheFile), { recursive: true });
@@ -317,9 +317,15 @@ export function resolveSecrets(projects, { online = true, refresh = false, cache
 const missingRequired = (results) =>
   results.flatMap((p) => p.secrets.filter((s) => s.required && s.status === 'missing').map((s) => ({ project: p, secret: s })));
 
-/** Adds `secrets` to each declared project in a status report, and a "Needs you" entry for every missing required one. */
-export function attachSecretsToStatus(report, projects, opts) {
-  const results = resolveSecrets(projects, opts);
+/**
+ * Adds `secrets` to each declared project in a status report, and a "Needs you" entry for every missing required one.
+ * With `cached`, answers come from the saved results and nothing touches the network. Safe to call again on the same report.
+ */
+export function attachSecretsToStatus(report, projects, { cached = false, ...opts } = {}) {
+  const results = cached ? cachedSecrets(projects, opts) : resolveSecrets(projects, opts);
+  for (const p of report) {
+    for (const c of p.checkouts ?? []) c.attention = c.attention.filter((a) => a.rule !== 'missing-secret');
+  }
   for (const r of results) {
     const entry = report.find((p) => p.id === r.id);
     if (entry) entry.secrets = r.secrets;

@@ -505,7 +505,7 @@ function cmdStatus(projects, flags, _positional, registryFile) {
     return;
   }
   const report = gatherStatus(projects, { useGh: !flags['no-gh'], fakePrs: flags['fake-prs'], fakeMerged: flags['fake-merged'] });
-  attachSecretsToStatus(report, projects, { online: !flags['no-gh'], gh: GH, cacheFile: secretsCacheFor(registryFile) });
+  attachSecretsToStatus(report, projects, { online: !flags['no-gh'], cached: flags['cached-secrets'] === true, gh: GH, cacheFile: secretsCacheFor(registryFile) });
   console.log(flags.json ? JSON.stringify({ projects: report }, null, 2) : renderStatus(report));
 }
 
@@ -882,7 +882,7 @@ function main() {
 
   const commands = { status: cmdStatus, route: cmdRoute, secrets: cmdSecrets, paused: cmdPaused };
   if (!commands[command]) {
-    console.error('usage: cos.mjs status [--json] [--no-gh] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | route "<text>" [--json] | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | mc [--port 4747] | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run]   (--registry <path>)');
+    console.error('usage: cos.mjs status [--json] [--no-gh] [--cached-secrets] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | route "<text>" [--json] | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | mc [--port 4747] | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run]   (--registry <path>)');
     process.exitCode = 2;
     return;
   }
