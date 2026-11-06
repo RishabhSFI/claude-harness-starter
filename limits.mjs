@@ -230,24 +230,59 @@ function saveMarks(file, marks) {
  */
 export function desktopSessions(dir) {
   const byCli = new Map();
-  if (!dir || !existsSync(dir)) return byCli;
+  eachDesktopFile(dir, (raw, path) => {
+    const entry = { localId: typeof raw.sessionId === 'string' ? raw.sessionId : basename(path, '.json'), archived: raw.isArchived === true };
+    for (const cli of [raw.cliSessionId, raw.lastAssistantCliSessionId]) if (typeof cli === 'string' && !byCli.has(cli)) byCli.set(cli, entry);
+  });
+  return byCli;
+}
+
+/** Calls `fn(parsedJson, path)` for every desktop chat file under `dir`. A file mid-write or in a format this doesn't know is skipped. */
+function eachDesktopFile(dir, fn) {
+  if (!dir || !existsSync(dir)) return;
   const walk = (d, depth) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       const path = join(d, e.name);
       if (e.isDirectory() && depth < 3) walk(path, depth + 1);
       else if (e.isFile() && /^local_[\w-]+\.json$/.test(e.name)) {
         try {
-          const raw = JSON.parse(readFileSync(path, 'utf8'));
-          const entry = { localId: typeof raw.sessionId === 'string' ? raw.sessionId : basename(e.name, '.json'), archived: raw.isArchived === true };
-          for (const cli of [raw.cliSessionId, raw.lastAssistantCliSessionId]) if (typeof cli === 'string' && !byCli.has(cli)) byCli.set(cli, entry);
+          fn(JSON.parse(readFileSync(path, 'utf8')), path);
         } catch {
-          /* a file mid-write or in a format this doesn't know */
+          /* unreadable or unexpected shape */
         }
       }
     }
   };
   walk(dir, 0);
-  return byCli;
+}
+
+const str = (v) => (typeof v === 'string' && v ? v : null);
+
+/**
+ * Every desktop chat with what the owner-facing page needs: its `local_…` id, title, whether it is archived or was started by a
+ * scheduled task, when it last moved, and how its last turn ended (`blocked` with the action it needs, `completed`, `review_ready`).
+ * Undocumented app files, so every field is checked and a missing one is null. Text is raw; callers clean it before showing it.
+ * @returns {Array<{localId: string, cliId: string | null, cwd: string | null, title: string | null, archived: boolean, scheduledTaskId: string | null,
+ *   lastActivityAt: string | null, status: string | null, needsAction: string | null}>}
+ */
+export function desktopChats(dir) {
+  const out = [];
+  eachDesktopFile(dir, (raw, path) => {
+    const last = Number.isFinite(raw.lastActivityAt) ? new Date(raw.lastActivityAt).toISOString() : null;
+    const summary = raw.postTurnSummary && typeof raw.postTurnSummary === 'object' ? raw.postTurnSummary : {};
+    out.push({
+      localId: str(raw.sessionId) ?? basename(path, '.json'),
+      cliId: str(raw.cliSessionId) ?? str(raw.lastAssistantCliSessionId),
+      cwd: str(raw.cwd),
+      title: str(raw.title),
+      archived: raw.isArchived === true,
+      scheduledTaskId: str(raw.scheduledTaskId),
+      lastActivityAt: last,
+      status: str(summary.status_category),
+      needsAction: str(summary.needs_action),
+    });
+  });
+  return out;
 }
 
 /** A pause counts as handled when this exact pause (same session, same pausedAt) was marked. A later pause is new. */

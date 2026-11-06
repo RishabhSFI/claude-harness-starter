@@ -183,6 +183,13 @@ export async function startTask(ctx, task, project) {
   return { ok: true, sessionId, brief };
 }
 
+/** Carries a stopped background session on under the same id with a note on where it left off. */
+export async function resumeSession(ctx, sessionId, note, { taskId, cwd } = {}) {
+  const r = await exec(ctx.claudeBin, ['--bg', '--resume', sessionId, note], { cwd: cwd && existsSync(cwd) ? cwd : undefined, timeout: CLAUDE_TIMEOUT_MS });
+  logAction(ctx, 'resume', { sessionId, taskId, ok: r.ok });
+  return r.ok ? { ok: true } : { ok: false, message: (r.err || r.out || 'claude --resume failed').split('\n')[0] };
+}
+
 const ALREADY_GONE = /not found|no such|no (background )?session|not running|unknown (session|id)/i;
 
 /** Stops a background session. One that already ended counts as stopped. */

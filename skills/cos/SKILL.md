@@ -274,6 +274,9 @@ or the project, then add what you found to the wiki.
   you started finishes.
 - A blocked action (a permission prompt or auto mode refusal) goes to the
   owner as is. Never ask a worker to do what was refused here.
+- A production command auto mode blocks goes into the request's "Waiting on
+  the owner" row in backticks, the whole command on one line. Mission control
+  shows it as a copy button.
 
 ## Daily brief
 

@@ -7,10 +7,12 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findGh, githubRepoOf, loadRegistry } from '../cos.mjs';
-import { findPaused, parseResetText } from '../limits.mjs';
+import { DEFAULT_DESKTOP_DIR, desktopChats, findPaused, parseResetText } from '../limits.mjs';
 import * as actions from './actions.mjs';
-import { createActivityReader, DEFAULT_PROJECTS_DIR } from './activity.mjs';
+import { clean, createActivityReader, DEFAULT_PROJECTS_DIR } from './activity.mjs';
 import { buildQa, createQaFetcher, isQaPr, loadReviewed, saveReviewed } from './qa.mjs';
+import { hiddenFrom, seenFrom } from './moves.mjs';
+import { loadMap, saveMap } from './move-state.mjs';
 import * as q from './queue.mjs';
 import { loadLinks, parseRequests, saveLinks, setLink } from './requests.mjs';
 import { cachedSecrets } from '../secrets.mjs';
@@ -157,15 +159,28 @@ export function shortTitle(text) {
 
 const SESSION_ID = /^[0-9a-f][0-9a-f-]{5,63}$/i;
 const TASK_ID = /^[0-9a-f]{6}$/;
+const MOVE_ID = /^(wake|unblock|merge|key|command|answer):[\w.:/#@~-]{1,200}$/;
+
+const sameMap = (a, b) => JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
+
+/** When the secrets check last ran, from its cache file. Null when there is no cache yet. */
+function secretsCheckedAt(file) {
+  try {
+    const at = JSON.parse(readFileSync(file, 'utf8')).at;
+    return Number.isFinite(at) ? new Date(at).toISOString() : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
- * @param {{port: number, registryFile?: string, requestsFile?: string, harness?: {dir?: string, repo?: string | null}, stateDir?: string, tokenFile?: string, projectsDir?: string, claudeBin?: string | null, ghBin?: string, intervals?: Partial<typeof DEFAULT_INTERVALS>, system?: ReturnType<typeof createSystemSampler> | null, kill?: (pid: number, signal: string) => void, log?: (line: string) => void}} opts
+ * @param {{port: number, desktopDir?: string | null, registryFile?: string, requestsFile?: string, harness?: {dir?: string, repo?: string | null}, stateDir?: string, tokenFile?: string, projectsDir?: string, claudeBin?: string | null, ghBin?: string, intervals?: Partial<typeof DEFAULT_INTERVALS>, system?: ReturnType<typeof createSystemSampler> | null, kill?: (pid: number, signal: string) => void, log?: (line: string) => void}} opts
  */
 export function createMissionControl(opts) {
   const port = opts.port;
   const registryFile = opts.registryFile ?? join(HARNESS_DIR, 'projects.json');
   const stateDir = opts.stateDir ?? join(MC_DIR, 'state');
-  const files = { queue: join(stateDir, 'queue.json'), settings: join(stateDir, 'settings.json'), lock: join(stateDir, 'server.lock'), resumed: join(stateDir, 'resumed.json'), reviewed: join(stateDir, 'qa-reviewed.json'), links: join(stateDir, 'request-links.json'), requests: opts.requestsFile ?? join(dirname(resolve(registryFile)), 'wiki', 'topics', 'owner-requests.md'), secretsCache: join(dirname(resolve(registryFile)), '.claude', 'secrets-cache.json') };
+  const files = { queue: join(stateDir, 'queue.json'), settings: join(stateDir, 'settings.json'), lock: join(stateDir, 'server.lock'), resumed: join(stateDir, 'resumed.json'), reviewed: join(stateDir, 'qa-reviewed.json'), links: join(stateDir, 'request-links.json'), seen: join(stateDir, 'seen.json'), hidden: join(stateDir, 'hidden.json'), requests: opts.requestsFile ?? join(dirname(resolve(registryFile)), 'wiki', 'topics', 'owner-requests.md'), secretsCache: join(dirname(resolve(registryFile)), '.claude', 'secrets-cache.json') };
   const intervals = { ...DEFAULT_INTERVALS, ...opts.intervals };
   const tokenFile = opts.tokenFile ?? join(homedir(), '.claude', 'mission-control.token');
   const token = ensureToken(tokenFile);
@@ -178,6 +193,7 @@ export function createMissionControl(opts) {
   const projects = [...registryProjects, ...harnessProject(registryProjects, opts.harness)];
   const roots = q.projectRoots(projects);
   const projectsDir = opts.projectsDir ?? DEFAULT_PROJECTS_DIR;
+  const desktopDir = opts.desktopDir === undefined ? DEFAULT_DESKTOP_DIR : opts.desktopDir;
   const reader = createActivityReader({ projectsDir });
   const usage = createUsageTracker({ projectsDir });
   const system = opts.system ?? null;
@@ -189,6 +205,11 @@ export function createMissionControl(opts) {
     status: null,
     sweep: null,
     limitPauses: [],
+    desktop: [],
+    desktopAt: null,
+    secretsAt: null,
+    seen: loadMap(files.seen),
+    hidden: loadMap(files.hidden),
     waiting: {},
     activity: new Map(),
     usage: undefined,
@@ -207,9 +228,11 @@ export function createMissionControl(opts) {
     qaDetails: new Map(),
     missingKeys: {},
     qaRun: null,
+    qaDone: false,
     qaVersion: 0,
     qaCache: null,
   };
+  const resuming = new Set();
   const allRepos = projects.flatMap((p) => p.repos);
   const qaFetcher = createQaFetcher({ exec: actions.exec, ghBin: ctx.ghBin });
   const qaProjects = () =>
@@ -347,6 +370,7 @@ export function createMissionControl(opts) {
         s.errors.qa = e.message;
         log(`qa refresh failed: ${e.stack}`);
       }
+      s.qaDone = true;
       s.qaRun = null;
       publish();
     })();
@@ -371,11 +395,35 @@ export function createMissionControl(opts) {
       qaCards: cards,
       requests: s.requests.list,
       links: s.links,
+      desktop: s.desktop,
+      secretsAt: s.secretsAt,
+      seen: s.seen,
+      hidden: s.hidden,
       system: system?.snapshot() ?? null,
       meta: { errors: s.errors, statusAt: s.at.status, sweepAt: s.at.sweep, claudeFound: Boolean(ctx.claudeBin), paths, leftover: leftover() },
     });
     snap.workMap.rows = snap.workMap.rows.map((r) => ({ ...r, queued: queuedFor.has(r.id) }));
+    syncMoveState(snap.moves);
     return snap;
+  }
+
+  /**
+   * First-seen times and hidden versions follow the moves on the list. Until the first reads of PRs, sessions, desktop
+   * chats and QA details have landed the list is incomplete, so nothing is dropped or saved then.
+   */
+  function syncMoveState(moves) {
+    const fresh = moves.filter((m) => !(m.id in s.seen));
+    if (fresh.length) s.seen = { ...s.seen, ...seenFrom(fresh) };
+    if (!(s.at.status && s.at.sessions && s.desktopAt && s.qaDone)) return;
+    for (const [key, file, next] of [['seen', files.seen, seenFrom(moves)], ['hidden', files.hidden, hiddenFrom(moves, s.hidden)]]) {
+      if (sameMap(s[key], next)) continue;
+      s[key] = next;
+      try {
+        saveMap(file, next);
+      } catch (e) {
+        log(`${key} map save failed: ${e.message}`);
+      }
+    }
   }
 
   function writeEvent(res, event, data) {
@@ -529,6 +577,7 @@ export function createMissionControl(opts) {
       try {
         if (!r.ok) throw new Error((r.err || 'cos status failed').split('\n')[0]);
         s.status = JSON.parse(r.out);
+        s.secretsAt = secretsCheckedAt(files.secretsCache);
         s.errors.status = null;
         s.at.status = new Date().toISOString();
         await settleClosedPrs();
@@ -547,6 +596,12 @@ export function createMissionControl(opts) {
       s.limitPauses = findPaused({ projectsDir, desktopDir: null, marksFile: files.resumed });
     } catch (e) {
       log(`paused-session scan failed: ${e.message}`);
+    }
+    try {
+      s.desktop = desktopChats(desktopDir);
+      s.desktopAt = new Date().toISOString();
+    } catch (e) {
+      log(`desktop chat scan failed: ${e.message}`);
     }
     tick();
   }
@@ -657,6 +712,57 @@ export function createMissionControl(opts) {
         const r = await actions.stopSession(ctx, sessionId);
         if (!r.ok) throw new HttpError(502, r.message);
         refreshSessions();
+        return { ok: true };
+      },
+    },
+    {
+      path: /^\/api\/sessions\/([^/]+)\/resume$/,
+      run: async (_, [sessionId]) => {
+        if (!SESSION_ID.test(sessionId)) throw new HttpError(400, 'Bad session id.');
+        const task = s.tasks.find((t) => q.sameSession(t.sessionId, sessionId));
+        if (!task) throw new HttpError(409, "Mission control didn't start that session, so it can't carry it on. Open it in the Claude app instead.");
+        if (q.TERMINAL.has(task.state)) throw new HttpError(409, `That task is ${task.state.replace('_', ' ')}, so there is nothing to carry on.`);
+        const sessions = knownSessions();
+        if (!ctx.claudeBin || !sessions) throw new HttpError(503, "Can't read the session list right now. Try again in a moment.");
+        const live = sessions.find((x) => q.sameSession(task.sessionId, x.sessionId) || x.sessionId === sessionId);
+        const id = live?.sessionId ?? task.sessionId;
+        // Keyed by task: the session id can read as the short or the full form depending on whether it is still live.
+        if (resuming.has(task.id)) throw new HttpError(409, 'Already carrying that one on. Give it a moment.');
+        resuming.add(task.id);
+        try {
+          const step = clean(s.activity.get(id)?.activity?.plan?.current ?? '');
+          const note = `You stopped partway${step ? ` through "${step}"` : ''}. Check your plan and the branch state, then carry on from where you left off.`;
+          if (live) {
+            const stopped = await actions.stopSession(ctx, id, { taskId: task.id, reason: 'resume' });
+            if (!stopped.ok) throw new HttpError(502, stopped.message);
+          }
+          const r = await actions.resumeSession(ctx, id, note, { taskId: task.id, cwd: live?.cwd });
+          if (!r.ok) throw new HttpError(502, live ? `Stopped it but couldn't restart it: ${r.message}` : r.message);
+        } finally {
+          resuming.delete(task.id);
+        }
+        refreshSessions();
+        return { ok: true, message: 'Told it to carry on.' };
+      },
+    },
+    {
+      path: /^\/api\/moves\/([^/]+)\/hide$/,
+      run: (body, [id]) => {
+        if (!MOVE_ID.test(id)) throw new HttpError(400, 'Bad move id.');
+        const on = body.hidden !== false;
+        const move = snapshot().moves.find((m) => m.id === id);
+        if (on) {
+          if (typeof body.version !== 'string' || !body.version || body.version.length > 100) throw new HttpError(400, 'Need the version of the move you saw.');
+          if (!move) throw new HttpError(404, 'That move is no longer on your list.');
+          if (move.version !== body.version) throw new HttpError(409, 'That move changed since you looked. Have another look.');
+          s.hidden = { ...s.hidden, [id]: move.version };
+        } else {
+          const { [id]: _gone, ...rest } = s.hidden;
+          s.hidden = rest;
+        }
+        saveMap(files.hidden, s.hidden);
+        actions.logAction(ctx, on ? 'hide' : 'unhide', { moveId: id });
+        publish();
         return { ok: true };
       },
     },

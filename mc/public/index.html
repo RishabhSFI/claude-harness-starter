@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light dark">
 <title>Mission control</title>
 <link rel="stylesheet" href="/app.css">
 <script src="/app.js" defer></script>
@@ -28,33 +28,36 @@
     <p id="banner" class="banner" role="status" hidden></p>
 
     <section class="view" data-view="overview" aria-labelledby="view-title">
-      <div id="answers" class="answers"></div>
-      <section id="qa-panel" class="panel" aria-labelledby="qa-h" hidden>
-        <div class="panel-head">
-          <h2 id="qa-h">Ready for you to QA</h2>
-          <a class="link" href="#qa">See all</a>
-        </div>
-        <div id="qa-mini" class="qa-mini"></div>
+      <section class="panel running" aria-labelledby="running-h">
+        <h2 id="running-h" class="sr-only">Work running</h2>
+        <div id="running"></div>
       </section>
-      <div id="kpis" class="kpis"></div>
-      <div class="overview-grid">
-        <section class="panel" aria-labelledby="active-h">
-          <div class="panel-head">
-            <h2 id="active-h">Active work</h2>
+      <section class="panel moves-panel" aria-labelledby="moves-h">
+        <div class="panel-head">
+          <h2 id="moves-h">Your moves <span id="moves-count" class="count num"></span></h2>
+          <button id="moves-hidden" type="button" class="btn ghost" hidden></button>
+        </div>
+        <ol id="moves" class="moves"></ol>
+      </section>
+      <section class="panel" aria-labelledby="active-h">
+        <div class="panel-head">
+          <h2 id="active-h">Active work</h2>
+          <div class="acts">
+            <button id="active-hidden" type="button" class="btn ghost" hidden></button>
             <a class="link" href="#work">All sessions</a>
           </div>
-          <div id="active" class="active-list"></div>
-        </section>
-        <div class="stack">
-          <section class="panel" aria-labelledby="needs-h">
-            <div class="panel-head"><h2 id="needs-h">Needs you</h2><span id="needs-count" class="count num"></span></div>
-            <ul id="needs" class="rows"></ul>
-          </section>
-          <section class="panel" aria-labelledby="feed-h">
-            <div class="panel-head"><h2 id="feed-h">Activity</h2></div>
-            <ol id="feed" class="feed" aria-live="polite" aria-relevant="additions"></ol>
-          </section>
         </div>
+        <div id="active" class="active-list"></div>
+      </section>
+      <div class="overview-grid quiet">
+        <section class="panel" aria-labelledby="needs-h">
+          <div class="panel-head"><h3 id="needs-h">Housekeeping</h3><span id="needs-count" class="count num"></span></div>
+          <ul id="needs" class="rows"></ul>
+        </section>
+        <section class="panel" aria-labelledby="feed-h">
+          <div class="panel-head"><h3 id="feed-h">Activity</h3></div>
+          <ol id="feed" class="feed" aria-live="polite" aria-relevant="additions"></ol>
+        </section>
       </div>
     </section>
 
@@ -127,6 +130,7 @@
     </section>
 
     <section class="view" data-view="usage" aria-labelledby="view-title" hidden>
+      <div id="kpis" class="kpis"></div>
       <div id="usage-kpis" class="kpis three"></div>
       <section class="panel" aria-labelledby="chart-h">
         <div class="panel-head">

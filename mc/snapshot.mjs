@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { clean } from './activity.mjs';
+import { buildMoves, buildRunning, sessionStates } from './moves.mjs';
 import { buildWorkMap } from './requests.mjs';
 import { mergedFromStatus, prsFromStatus, projectOfPath, queueOrder, sameSession } from './queue.mjs';
 
@@ -250,12 +251,18 @@ export function buildKpis({ work, lanes, queueLength, usage }) {
   };
 }
 
-export function buildSnapshot({ projects, roots, status, sessions, tasks, settings, waiting, sweep, limitPauses = [], meta, activity = new Map(), usage = EMPTY_USAGE, system = null, qaCards = [], requests = [], links, now = new Date() }) {
+export function buildSnapshot({ projects, roots, status, sessions, tasks, settings, waiting, sweep, limitPauses = [], meta, activity = new Map(), usage = EMPTY_USAGE, system = null, qaCards = [], requests = [], links, desktop = [], secretsAt = null, seen = {}, hidden = {}, now = new Date() }) {
   const prs = prsFromStatus(status);
   const working = tasks.filter((t) => t.state === 'starting' || t.state === 'working').length;
   const lanes = buildLanes(tasks, prs, now, mergedFromStatus(status));
   const queued = queueOrder(tasks);
   const work = buildWork({ sessions, projects, roots, tasks, prs, activity });
+  const queue = {
+    waiting: queued.map((t) => ({ ...t, waitingFor: waiting[t.id] ?? null })),
+    active: tasks.filter((t) => !['queued', 'cancelled'].includes(t.state)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 30),
+  };
+  const secrets = (status?.projects ?? []).filter((p) => p.secrets?.length).map((p) => ({ id: p.id, name: p.name, secrets: p.secrets }));
+  const parts = { work, queue, settings, projects, requests, desktop, now };
   return {
     meta: { ...meta, cap: settings.cap, paused: settings.paused, pauseReason: settings.pauseReason, pausedUntil: settings.pausedUntil ?? null, working },
     projects: projects.map((p) => ({ id: p.id, name: p.name })),
@@ -263,10 +270,10 @@ export function buildSnapshot({ projects, roots, status, sessions, tasks, settin
     limitPauses: limitPauses.map(({ sessionId, cwd, title, pausedAt, resetsAt, due, handled }) => ({ sessionId, cwd, title, pausedAt, resetsAt, due, handled })),
     sessions: groupSessions(sessions, projects, roots, tasks),
     lanes,
-    queue: {
-      waiting: queued.map((t) => ({ ...t, waitingFor: waiting[t.id] ?? null })),
-      active: tasks.filter((t) => !['queued', 'cancelled'].includes(t.state)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 30),
-    },
+    queue,
+    moves: buildMoves({ ...parts, lanes, qaCards, secrets, secretsAt, seen, hidden }),
+    running: buildRunning(parts),
+    sessionStates: sessionStates(work, desktop, now),
     fromReview: sweep ? { file: sweep.file, date: sweep.date, items: sweep.items } : null,
     work,
     qa: { cards: qaCards },

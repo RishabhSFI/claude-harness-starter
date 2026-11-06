@@ -45,7 +45,7 @@ let mapFilter = 'all';
 let qaFocus = null;
 let doneOpen = false;
 const openPlans = new Set();
-const ui = { qaKey: '', mapKey: '', feed: [], feedNodes: new Map(), feedReady: false, chartKey: '', chartIdx: null };
+const ui = { qaKey: '', mapKey: '', movesKey: '', runKey: '', feed: [], feedNodes: new Map(), feedReady: false, chartKey: '', chartIdx: null };
 
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -302,14 +302,14 @@ function stepLine(plan) {
 
 const stateWords = (w) => (w.busy ? `Working for ${span(w.since) ?? 'a moment'}` : `${w.status === 'idle' ? 'Idle' : w.status} for ${span(w.since) ?? 'a moment'}`);
 
-function activeCard(w) {
+function activeCard(w, runState) {
   return h('article', { class: 'card' },
     h('div', { class: 'card-top' },
       h('div', {},
         h('div', { class: 'name' }, w.name),
         h('div', { class: 'proj' }, `${w.projectName}, ${stateWords(w).toLowerCase()}`),
       ),
-      prChip(w.pr),
+      runState === 'stalled' ? chip('Stopped partway', 'bad') : runState === 'waiting' ? chip('Waiting on you', 'warn') : prChip(w.pr),
     ),
     stepLine(w.plan),
     w.plan ? progress(w.plan) : null,
@@ -355,22 +355,226 @@ function needsActions(item) {
   return acts;
 }
 
-function renderOverview() {
-  renderAnswers();
-  const k = state.kpis;
-  const sessions = state.work.length;
-  $('kpis').replaceChildren(
-    kpiCard({ label: 'Sessions working', value: k.working.value, sub: `of ${plural(sessions, 'open session')}`, series: k.working.series }),
-    kpiCard({ label: 'PRs waiting on you', value: k.prsWaiting.value, sub: 'to review or merge', series: k.prsWaiting.series }),
-    kpiCard({ label: 'In the queue', value: k.queueLength.value, sub: `${state.meta.working} started and running`, series: k.queueLength.series }),
-    kpiCard({ label: 'Merged today', value: k.mergedToday.value, sub: 'pull requests', series: k.mergedToday.series }),
-    kpiCard({ label: 'Usage today', value: compact.format(k.usageToday.value), sub: 'weighted tokens', series: k.usageToday.series }),
-  );
-  const busy = state.work.filter((w) => w.busy);
-  $('active').replaceChildren(...(busy.length ? busy.map(activeCard) : [h('p', { class: 'empty' }, state.meta.errors?.sessions ?? "Nothing's running right now.")]));
-  applyBars($('active'));
+const CHAT_HREF = /^claude:\/\/code\/continue\?session=local_[A-Za-z0-9-]{1,64}$/;
+const HIDDEN_STATES = new Set(['finished', 'archived', 'scheduled']);
+let showHiddenMoves = false;
+let showHiddenWork = false;
 
-  const items = state.needsYou;
+/** Puts text on the clipboard. Falls back to a hidden textarea, then to selecting the visible text so the owner can press copy. */
+async function copyText(text, shown) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {}
+  const area = h('textarea', { class: 'offscreen', readonly: true, 'aria-hidden': 'true' });
+  area.value = text;
+  document.body.append(area);
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {}
+  area.remove();
+  if (!ok && shown) {
+    const range = document.createRange();
+    range.selectNodeContents(shown);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+  }
+  return ok;
+}
+
+function copyBtn(label, text, shown, cls = 'primary') {
+  const b = btn(label, async () => {
+    const ok = await copyText(text, shown);
+    b.textContent = ok ? 'Copied' : 'Selected. Press copy';
+    setTimeout(() => (b.textContent = label), 2500);
+  }, cls);
+  return b;
+}
+
+const codeBox = (text) => h('code', { class: 'cmd' }, text);
+
+function startNext(action) {
+  if (action.type === 'approve') return act(`/api/tasks/${action.taskId}/approve`);
+  if (action.type === 'unpause') return act('/api/settings', { paused: false });
+  return act(`/api/requests/${encodeURIComponent(action.requestId)}/start`);
+}
+
+function moveButton(m, box) {
+  const a = m.action;
+  if (a.type === 'merge') return btn('Merge', () => merge({ repo: a.repo, number: a.number, classification: a.live ? 'review' : 'mergeable-by-cos', base: a.base, green: a.green, checksText: a.checksText }), 'primary');
+  if (a.type === 'copy') return copyBtn(a.label, a.text, box);
+  if (a.type === 'keys') return copyBtn(a.keys.length > 1 ? 'Copy all commands' : 'Copy command', a.keys.map((k) => k.command).join('\n'), box);
+  if (a.type === 'resume') {
+    const b = btn('Wake it', async () => {
+      b.disabled = true;
+      await act(`/api/sessions/${encodeURIComponent(a.sessionId)}/resume`);
+      b.disabled = false;
+    }, 'primary');
+    return b;
+  }
+  if (a.type === 'open-chat') return CHAT_HREF.test(a.href) ? h('a', { class: 'btn primary', href: a.href }, 'Open chat') : null;
+  if (a.type === 'approve') return btn('Approve start', () => act(`/api/tasks/${a.taskId}/approve`), 'primary');
+  if (a.type === 'unpause') return btn('Start again', () => act('/api/settings', { paused: false }), 'primary');
+  if (a.type === 'link') {
+    const href = a.href.startsWith('#') ? a.href : safeHref(a.href);
+    return href ? h('a', { class: 'btn', href, ...(a.href.startsWith('#') ? {} : { target: '_blank', rel: 'noopener noreferrer' }) }, a.label) : null;
+  }
+  return null;
+}
+
+function moveExtra(m) {
+  const a = m.action;
+  if (a.type === 'copy') return codeBox(a.text);
+  if (a.type !== 'keys') return null;
+  const several = a.keys.length > 1;
+  return h('div', { class: 'keys' },
+    h('ul', { class: 'keylist' },
+      ...a.keys.map((k) => {
+        const cmd = codeBox(k.command);
+        return h('li', {}, h('div', { class: 'k-top' }, h('strong', { class: 'k-name' }, k.name), k.purpose ? h('span', { class: 'muted' }, k.purpose) : null, several ? copyBtn('Copy', k.command, cmd, 'ghost') : null), cmd);
+      }),
+    ),
+    h('div', { class: 'meta' }, a.place, a.href ? [' · ', extLink('Open the page', safeHref(a.href))] : null, m.checkedAt ? ` · checked ${ago(m.checkedAt)}` : null),
+  );
+}
+
+function waitedText(m) {
+  const ms = waitMs(m.since);
+  return h('span', { class: 'waited num', 'data-since': m.since }, ms === null || ms < 60_000 ? 'new' : `waiting ${span(m.since)}`);
+}
+
+function moveRow(m) {
+  const extra = moveExtra(m);
+  const button = moveButton(m, extra?.matches('code') ? extra : extra?.querySelector('code'));
+  const checks = m.action.type === 'merge' && m.action.checksText ? chip(`Checks: ${m.action.checksText}`, m.action.green ? 'ok' : /failing/.test(m.action.checksText) ? 'bad' : 'warn') : null;
+  const hide = h('button', {
+    type: 'button',
+    class: 'hide-btn',
+    title: m.hidden ? 'Put this move back in the list' : 'Hide this move until something about it changes',
+    'aria-label': m.hidden ? `Show again: ${m.title}` : `Hide until it changes: ${m.title}`,
+    onclick: () => act(`/api/moves/${encodeURIComponent(m.id)}/hide`, m.hidden ? { hidden: false } : { version: m.version }),
+  }, m.hidden ? 'Show' : 'Hide');
+  const box = h('div', { class: 'move-main' },
+    h('div', { class: 'move-head' }, h('span', { class: 'move-title' }, m.title), h('span', { class: 'move-meta' }, m.title.includes(m.projectName) ? null : h('span', { class: 'move-proj' }, m.projectName), waitedText(m), checks)),
+    m.firstNote ? h('div', { class: 'move-first' }, m.firstNote) : null,
+    m.why ? h('p', { class: 'move-why' }, m.why) : null,
+    extra,
+  );
+  return h('li', { class: `move${m.hidden ? ' is-hidden' : ''}`, 'data-kind': m.kind }, box, h('div', { class: 'move-act' }, button, hide));
+}
+
+/** Headings for runs of moves with the same group, in rank order. A move another move waits on sits in that move's group. */
+function groupHead(group, n) {
+  return h('li', { class: 'move-group', 'data-group': group }, h('h3', {}, group), h('span', { class: 'count num' }, String(n)));
+}
+
+function renderMoves() {
+  const all = state.moves ?? [];
+  const visible = all.filter((m) => !m.hidden);
+  const hidden = all.filter((m) => m.hidden);
+  $('moves-count').textContent = visible.length ? String(visible.length) : '';
+  const toggle = $('moves-hidden');
+  toggle.hidden = !hidden.length;
+  toggle.textContent = showHiddenMoves ? `Hide ${hidden.length} hidden` : `Show ${hidden.length} hidden`;
+  toggle.onclick = () => {
+    showHiddenMoves = !showHiddenMoves;
+    renderMoves();
+  };
+  const rows = showHiddenMoves ? [...visible, ...hidden] : visible;
+  const key = JSON.stringify(rows);
+  if (ui.movesKey === key) return;
+  ui.movesKey = key;
+  const items = [];
+  for (let i = 0; i < rows.length; i++) {
+    if (i === 0 || rows[i].group !== rows[i - 1].group) {
+      let n = 1;
+      while (rows[i + n]?.group === rows[i].group) n++;
+      items.push(groupHead(rows[i].group, n));
+    }
+    items.push(moveRow(rows[i]));
+  }
+  $('moves').replaceChildren(...(items.length ? items : [h('li', { class: 'empty' }, 'Nothing needs you right now.')]));
+}
+
+const taskTitle = (text) => {
+  const line = text.trim().split('\n')[0];
+  return line.length > 80 ? `${line.slice(0, 79).trimEnd()}…` : line;
+};
+
+function startForm() {
+  const projects = state.projects.filter((p) => p.id !== 'harness' || state.projects.length === 1);
+  const what = h('input', { name: 'what', placeholder: 'What should it do?', 'aria-label': 'What should it do?', required: true, maxlength: 400 });
+  const project = h('select', { name: 'project', 'aria-label': 'Project' }, ...(projects.length ? projects : state.projects).map((p) => h('option', { value: p.id }, p.name)));
+  return h('form', {
+    class: 'start-form',
+    autocomplete: 'off',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const text = what.value.trim();
+      if (!text) return;
+      try {
+        await post('/api/tasks', { project: project.value, title: taskTitle(text), prompt: text, priority: 2, risky: false });
+        what.value = '';
+        notice('Added. A worker starts on the next tick.', 'info');
+      } catch (ex) {
+        notice(ex.message, 'bad');
+      }
+    },
+  }, project, what, h('button', { type: 'submit', class: 'btn primary' }, 'Start work'));
+}
+
+function renderRunning() {
+  const r = state.running;
+  if (!r) return;
+  const host = $('running');
+  if (host.contains(document.activeElement) && host.querySelector('form')) return;
+  const key = JSON.stringify([r, state.projects.map((p) => p.id)]);
+  if (ui.runKey === key) return;
+  ui.runKey = key;
+  const counts = [r.waiting ? `${r.waiting} waiting on you` : null, r.stalled ? `${r.stalled} stopped` : null].filter(Boolean);
+  if (!r.running) {
+    host.replaceChildren(h('div', { class: 'nudge' },
+      h('div', { class: 'nudge-text' }, h('strong', {}, 'Nothing is running.'), counts.length ? h('span', { class: 'muted' }, ` ${counts.join(', ')}.`) : null),
+      r.next ? btn(r.next.label, () => startNext(r.next.action), 'primary') : startForm(),
+    ));
+    return;
+  }
+  host.replaceChildren(h('div', { class: 'run-strip' },
+    h('div', { class: 'run-line' }, h('strong', {}, `${r.running} running`), counts.flatMap((c) => [' · ', c])),
+    r.idleProjects.length ? h('div', { class: 'run-idle' }, h('span', { class: 'muted' }, 'Nothing running in'), ...r.idleProjects.map((p) => chip(p.name))) : null,
+  ));
+}
+
+function renderActive() {
+  const states = state.sessionStates ?? {};
+  const all = state.work.filter((w) => !HIDDEN_STATES.has(states[w.sessionId]));
+  const hidden = state.work.length - all.length;
+  const toggle = $('active-hidden');
+  toggle.hidden = !hidden;
+  toggle.textContent = showHiddenWork ? `Hide ${hidden} hidden` : `Show ${hidden} hidden`;
+  toggle.onclick = () => {
+    showHiddenWork = !showHiddenWork;
+    renderActive();
+  };
+  const rows = showHiddenWork ? state.work : all;
+  $('active').replaceChildren(...(rows.length ? rows.map((w) => activeCard(w, states[w.sessionId])) : [h('p', { class: 'empty' }, state.meta.errors?.sessions ?? "Nothing's running right now.")]));
+  applyBars($('active'));
+}
+
+/** Rows moves don't cover: dirty folders, system alerts and the like. Approvals and PRs with a move, and keys, live in Your moves. */
+function renderHousekeeping() {
+  const moveIds = new Set((state.moves ?? []).map((m) => m.id));
+  const items = state.needsYou.filter((it) => {
+    if (it.kind === 'approve') return false;
+    if (it.kind === 'blocked' && moveIds.has(`wake:${it.sessionId}`)) return false;
+    if (it.kind === 'review') {
+      const m = it.link?.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+      return !(m && moveIds.has(`merge:${m[1]}#${m[2]}`));
+    }
+    return !(it.kind === 'status' && /missing secret /.test(it.text));
+  });
   $('needs-count').textContent = items.length ? String(items.length) : '';
   $('needs').replaceChildren(
     ...(items.length
@@ -385,8 +589,15 @@ function renderOverview() {
             acts.length ? h('div', { class: 'acts' }, acts) : null,
           );
         })
-      : [h('li', { class: 'empty' }, 'Nothing needs you right now.')]),
+      : [h('li', { class: 'empty' }, 'Nothing to tidy.')]),
   );
+}
+
+function renderOverview() {
+  renderMoves();
+  renderRunning();
+  renderActive();
+  renderHousekeeping();
   renderFeed();
 }
 
@@ -619,6 +830,14 @@ function renderChart() {
 }
 
 function renderUsage() {
+  const k = state.kpis;
+  $('kpis').replaceChildren(
+    kpiCard({ label: 'Sessions working', value: k.working.value, sub: `of ${plural(state.work.length, 'open session')}`, series: k.working.series }),
+    kpiCard({ label: 'PRs waiting on you', value: k.prsWaiting.value, sub: 'to review or merge', series: k.prsWaiting.series }),
+    kpiCard({ label: 'In the queue', value: k.queueLength.value, sub: `${state.meta.working} started and running`, series: k.queueLength.series }),
+    kpiCard({ label: 'Merged today', value: k.mergedToday.value, sub: 'pull requests', series: k.mergedToday.series }),
+    kpiCard({ label: 'Usage today', value: compact.format(k.usageToday.value), sub: 'weighted tokens', series: k.usageToday.series }),
+  );
   const u = state.usage ?? { hours: [], today: 0, top: [] };
   const total = u.hours.reduce((n, x) => n + x.weighted, 0);
   const peak = u.hours.reduce((best, x) => (x.weighted > (best?.weighted ?? -1) ? x : best), null);
@@ -698,33 +917,6 @@ function checksState(c) {
   if (!c) return null;
   const tone = c.fail ? 'bad' : c.pending ? 'accent' : c.green ? 'ok' : 'warn';
   return chip(`Checks: ${c.text}`, tone);
-}
-
-function renderAnswers() {
-  const counts = state.workMap?.counts ?? {};
-  const ready = readyCards();
-  const oldest = ready.map((c) => waitMs(c.waitingSince)).filter((n) => n !== null).sort((a, b) => b - a)[0];
-  const oldestText = oldest === undefined ? 'Nothing is waiting for you' : `Oldest has waited ${durWords(oldest)}`;
-  const tile = (label, value, sub, href, tone) =>
-    h('a', { class: 'kpi tile', href, 'data-tone': value ? tone : null }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), h('div', { class: 'sub' }, sub));
-  $('answers').replaceChildren(
-    tile('Ready for you to QA', ready.length, oldestText, '#qa', 'warn'),
-    tile('Being worked on now', counts.working ?? 0, [`${plural(counts.waiting_helper ?? 0, 'more is', 'more are')} between steps`, counts.paused ? `${counts.paused} paused until your usage resets` : null].filter(Boolean).join(', '), '#map/working', 'ok'),
-    tile('Not being worked on', counts.not_worked ?? 0, counts.not_worked ? 'Nobody is on these. Open them to start a worker' : 'Everything has someone on it', '#map/not_worked', 'bad'),
-  );
-  const top = ready.slice(0, 3);
-  $('qa-panel').hidden = !ready.length;
-  $('qa-mini').replaceChildren(
-    ...top.map((c) =>
-      h('article', { class: 'card qa-mini-card' },
-        h('div', { class: 'card-top' }, h('div', { class: 'name' }, c.title), chip(c.projectName)),
-        h('div', { class: 'proj' }, waitWords(c.waitingSince) ?? ''),
-        h('div', { class: 'meta' }, c.kind === 'pr' ? 'What to do next' : "What's left for you"),
-        h('p', { class: 'next' }, c.nextAction),
-        h('div', { class: 'acts left' }, h('a', { class: 'btn', href: `#qa/${encodeURIComponent(c.key)}` }, 'Open card')),
-      ),
-    ),
-  );
 }
 
 const bytesText = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${Math.round(b / 1024 ** 2)} MB`);
@@ -1027,13 +1219,13 @@ const RENDER = { overview: renderOverview, qa: renderQa, map: renderMap, work: r
 let legendSet = false;
 
 function renderNav() {
-  const needs = state?.needsYou.length ?? 0;
+  const needs = (state?.moves ?? []).filter((m) => !m.hidden).length;
   for (const a of $('nav').querySelectorAll('a')) {
     const id = a.dataset.view;
     if (id === view) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
     const badge = a.querySelector('.badge');
-    const n = id === 'overview' ? needs : id === 'qa' ? readyCards().length : id === 'system' ? state?.system?.alerts.length ?? 0 : 0;
+    const n = id === 'overview' ? needs : id === 'system' ? state?.system?.alerts.length ?? 0 : 0;
     if (badge) {
       badge.hidden = !n;
       badge.textContent = String(n);
@@ -1043,6 +1235,8 @@ function renderNav() {
 
 function render() {
   if (!state) return;
+  const owed = (state.moves ?? []).filter((m) => !m.hidden).length;
+  document.title = owed ? `(${owed}) Mission control` : 'Mission control';
   renderErrors();
   renderNav();
   RENDER[view]();
@@ -1052,6 +1246,10 @@ function render() {
 function renderClock() {
   $('refreshed').textContent = state ? `Sessions checked ${ago(pingAt)}, PRs ${state.meta.statusAt ? ago(state.meta.statusAt) : 'loading'}` : 'No data yet';
   for (const t of document.querySelectorAll('#feed time')) t.textContent = ago(t.dataset.at);
+  for (const t of document.querySelectorAll('#moves [data-since]')) {
+    const ms = waitMs(t.dataset.since);
+    t.textContent = ms === null || ms < 60_000 ? 'new' : `waiting ${span(t.dataset.since)}`;
+  }
 }
 
 function route() {
@@ -1076,7 +1274,7 @@ function buildNav() {
   $('nav').replaceChildren(
     ...VIEWS.map((v) =>
       h('li', {},
-        h('a', { href: `#${v.id}`, 'data-view': v.id, 'aria-label': v.label }, icon(v.id), h('span', { class: 'label', 'aria-hidden': 'true' }, v.label), ['overview', 'qa', 'system'].includes(v.id) ? h('span', { class: 'badge', hidden: true }) : null),
+        h('a', { href: `#${v.id}`, 'data-view': v.id, 'aria-label': v.label }, icon(v.id), h('span', { class: 'label', 'aria-hidden': 'true' }, v.label), ['overview', 'system'].includes(v.id) ? h('span', { class: 'badge', hidden: true }) : null),
       ),
     ),
   );

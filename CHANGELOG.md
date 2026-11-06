@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-06, harness da09fb4
+
+- Mission control: your moves first, and a push to keep work running (#6)
+- wiki: security audit merged; mission control request
+- and 1 internal change
+
 ## 2026-11-05, harness 3d613e2
 
 - Cloudflare security audit: skill, gate step, PR rule and daily sweep (#5)

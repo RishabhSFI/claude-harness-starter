@@ -5,7 +5,7 @@ import { sameSession } from './queue.mjs';
 
 /**
  * @typedef {{ id: string, section: 'open'|'waiting'|'working'|'done', asked: string, text: string, project: string | null,
- *   stands: string, prs: string[], links: string[] }} Request
+ *   stands: string, prs: string[], links: string[], commands: string[] }} Request
  * @typedef {{ link: Record<string, string[]>, unlink: Record<string, string[]> }} Links
  */
 
@@ -21,6 +21,18 @@ const URL_RE = /(?:https?:\/\/|github\.com\/)[^\s)|`]+/g;
 const IDLE_LIMIT_MS = 2 * 3600e3;
 
 const plain = (s) => String(s ?? '').replace(/\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, '$1').replace(/[`*]|(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])/g, '').replace(/\s+/g, ' ').trim();
+
+const SHELL_WORDS = new Set(['sudo', 'cd', 'git', 'gh', 'vercel', 'npm', 'npx', 'pnpm', 'yarn', 'node', 'bash', 'sh', 'curl', 'brew', 'launchctl', 'ssh', 'scp', 'rsync', 'docker', 'make', 'python3']);
+const looksLikeShell = (c) => {
+  const first = c.split(' ')[0];
+  return SHELL_WORDS.has(first) || /^(?:\.{1,2}|~)\//.test(first) || c.includes(' && ');
+};
+
+/** Backticked text in a row that is a shell command (it starts with a program the owner would run), in the order written. `plain()` drops the backticks, so this reads the raw cells. */
+export function commandsIn(...cells) {
+  const found = cells.flatMap((c) => [...String(c ?? '').matchAll(/`([^`\n]+)`/g)].map((m) => m[1].replace(/\s+/g, ' ').trim()));
+  return [...new Set(found.filter((c) => c.includes(' ') && looksLikeShell(c)))];
+}
 
 /** Same text in a different section keeps its id, so a row moving tables keeps its manual links. */
 const requestId = (asked, text) => createHash('sha1').update(`${plain(asked).toLowerCase()}|${plain(text).toLowerCase()}`).digest('hex').slice(0, 8);
@@ -71,7 +83,7 @@ export function parseRequests(markdown, { repos = [] } = {}) {
     const slug = projectCell.match(/\[\[projects\/([^\]|]+)/)?.[1];
     const project = (slug ?? plain(projectCell)).toLowerCase() || null;
     const body = `${text} ${done ? third ?? '' : fourth ?? ''}`;
-    out.push({ id: requestId(asked, text), section, asked: plain(asked), text: plain(text), project, stands, prs: prRefsIn(body, repos), links: urlsIn(body) });
+    out.push({ id: requestId(asked, text), section, asked: plain(asked), text: plain(text), project, stands, prs: prRefsIn(body, repos), links: urlsIn(body), commands: section === 'waiting' ? commandsIn(text, done ? third : fourth) : [] });
   }
   return out;
 }
