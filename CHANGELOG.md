@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-07, harness 86221d0
+
+- requests: chats archived, auto-archive on, size-guard PR #11
+- requests: new-chat token cost and old chat clutter
+- Warn on chat growth over its first reply, not a fixed 120k (#11)
+- Handoff: usage cut live, stale worktrees, housekeeping
+- log: usage cut (#10)
+
 ## 2026-11-07, harness d781520
 
 - requests: usage work merged (#10)

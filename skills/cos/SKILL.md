@@ -172,8 +172,8 @@ has the step), fix confirmed high or critical findings, and list the rest in
 the PR under "Security audit".
 
 Keep this chat small: delegate building and long reads, don't end a turn
-just to say you're waiting, and stop once the PR is open. Past about 120k
-tokens of history (the prompt hook warns you), write your state to the
+just to say you're waiting, and stop once the PR is open. Once the chat has grown
+about 80k tokens past its own starting size (the prompt hook warns you), write your state to the
 project's wiki page or a handoff note and continue in a fresh session. Read chat history
 (other sessions' transcripts, saved tool-result files) only through the
 `history-reader` subagent, except a status peek of 4 events or fewer. Size

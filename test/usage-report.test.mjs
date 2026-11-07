@@ -7,7 +7,7 @@ import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = realpathSync(join(fileURLToPath(import.meta.url), '..', '..'));
-const { collect, capped, summarize, weigh, labelFolder } = await import(join(ROOT, 'usage-report.mjs'));
+const { collect, capped, summarize, weigh, labelFolder, baselines, historyOf } = await import(join(ROOT, 'usage-report.mjs'));
 
 const NOW = Date.parse('2026-11-07T12:00:00Z');
 const line = (id, at, usage, extra = {}) =>
@@ -39,6 +39,17 @@ describe('usage report', () => {
     assert.equal(rs.length, 3);
     assert.equal(rs.find((r) => r.read === 199_000).output, 400);
     assert.equal(rs.filter((r) => r.sub).length, 1);
+  });
+
+  test('each chat is measured against its own first reply', () => {
+    const rs = collect(dir, { hours: 48, now: NOW });
+    const start = baselines(rs);
+    const big = rs.find((r) => r.read === 199_000);
+    assert.equal(start(big), historyOf(big));
+    assert.equal(capped(rs, start).over, 0);
+    assert.equal(capped(rs, (r) => start(r) - 1).over, 2);
+    assert.match(summarize(rs, { growth: 80_000 }), /Growth cap of 80k over each chat's own start/);
+    assert.match(summarize(rs, { cap: 100_000 }), /Size cap at 100k/);
   });
 
   test('weights follow the price ratios', () => {

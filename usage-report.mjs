@@ -1,5 +1,5 @@
 // Where the Claude usage goes: reads transcripts under ~/.claude/projects (main chats and subagents) and prints
-// a short summary. Never prints transcript text. Run: node usage-report.mjs [--hours 48] [--cap 120000] [--projects-dir <dir>]
+// a short summary. Never prints transcript text. Run: node usage-report.mjs [--hours 48] [--growth 80000 | --cap <tokens>] [--projects-dir <dir>]
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -48,7 +48,7 @@ export function collect(dir, { hours = 48, now = Date.now() } = {}) {
       const u = { input: num(m.usage.input_tokens), write: num(m.usage.cache_creation_input_tokens), read: num(m.usage.cache_read_input_tokens), output: num(m.usage.output_tokens) };
       const w = weigh(u);
       const seen = byId.get(key);
-      if (!seen || w > seen.w) byId.set(key, { ...u, w, model: String(m.model ?? 'unknown'), folder: t.folder, session: t.session, sub: t.sub });
+      if (!seen || w > seen.w) byId.set(key, { ...u, w, at, model: String(m.model ?? 'unknown'), folder: t.folder, session: t.session, sub: t.sub });
     }
   }
   return [...byId.values()];
@@ -67,11 +67,23 @@ export function labelFolder(folder) {
   return (s.length > 28 ? s.slice(0, 28) : s) + (wt ? ' (worktree)' : '');
 }
 
-/** Cost if every reply's history had been served at no more than `cap` tokens (cache read trimmed first). */
-export function capped(records, cap) {
+/** Each main chat's starting size: the history of its earliest reply in the window. Subagents get their own first reply. */
+export function baselines(records) {
+  const first = new Map();
+  for (const r of records) {
+    const id = `${r.folder}/${r.session}/${r.sub ? 'sub' : 'main'}`;
+    const f = first.get(id);
+    if (!f || r.at < f.at) first.set(id, r);
+  }
+  return (r) => historyOf(first.get(`${r.folder}/${r.session}/${r.sub ? 'sub' : 'main'}`));
+}
+
+/** Cost if every reply's history had been served at no more than its cap (cache read trimmed first). `cap` is a number or a function of the record. */
+export function capped(records, capArg) {
   let over = 0, overW = 0, newW = 0, total = 0;
   for (const r of records) {
     total += r.w;
+    const cap = typeof capArg === 'function' ? capArg(r) : capArg;
     if (historyOf(r) <= cap) { newW += r.w; continue; }
     over++; overW += r.w;
     const read = Math.max(0, Math.min(r.read, cap - r.input - r.write));
@@ -80,7 +92,7 @@ export function capped(records, cap) {
   return { over, overW, newW, total };
 }
 
-export function summarize(records, { cap = 120_000, hours = 48 } = {}) {
+export function summarize(records, { cap = null, growth = 80_000, hours = 48 } = {}) {
   const total = sum(records, (r) => r.w);
   const raw = { input: sum(records, (r) => r.input), write: sum(records, (r) => r.write), read: sum(records, (r) => r.read), output: sum(records, (r) => r.output) };
   const rawTotal = raw.input + raw.write + raw.read + raw.output;
@@ -104,18 +116,20 @@ export function summarize(records, { cap = 120_000, hours = 48 } = {}) {
   const subW = sum(records.filter((r) => r.sub), (r) => r.w);
   lines.push(`Subagents ${pct(subW, total)}, main chats ${pct(total - subW, total)}.`);
 
-  const c = capped(records, cap);
-  lines.push('', `Size cap at ${k(cap)}: ${c.over} of ${records.length} replies (${pct(c.over, records.length)}) had history above it, ${pct(c.overW, total)} of weighted cost.`,
-    `If those had been served at ${k(cap)} instead (cache read trimmed, writes and output unchanged), weighted cost falls ${pct(total - c.newW, total)}. Ceiling only: it ignores the cost of writing handoffs and starting fresh chats.`);
+  const start = baselines(records);
+  const c = capped(records, cap === null ? (r) => start(r) + growth : cap);
+  const rule = cap === null ? `Growth cap of ${k(growth)} over each chat's own start` : `Size cap at ${k(cap)}`;
+  lines.push('', `${rule}: ${c.over} of ${records.length} replies (${pct(c.over, records.length)}) had history above it, ${pct(c.overW, total)} of weighted cost.`,
+    `If those had been served at the cap instead (cache read trimmed, writes and output unchanged), weighted cost falls ${pct(total - c.newW, total)}. Ceiling only: it ignores the cost of writing handoffs and starting fresh chats.`);
   return lines.join('\n');
 }
 
 export function main(argv = process.argv.slice(2)) {
   const opt = (name, d) => { const i = argv.indexOf(`--${name}`); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
-  const hours = Number(opt('hours', 48)), cap = Number(opt('cap', 120000));
-  if (!(hours > 0) || !(cap > 0)) { console.error('usage: usage-report.mjs [--hours 48] [--cap 120000] [--projects-dir <dir>]'); process.exitCode = 2; return; }
+  const hours = Number(opt('hours', 48)), cap = opt('cap', null) === null ? null : Number(opt('cap', null)), growth = Number(opt('growth', 80000));
+  if (!(hours > 0) || (cap !== null && !(cap > 0)) || !(growth > 0)) { console.error('usage: usage-report.mjs [--hours 48] [--growth 80000 | --cap <tokens>] [--projects-dir <dir>]'); process.exitCode = 2; return; }
   const dir = opt('projects-dir', join(homedir(), '.claude', 'projects'));
-  console.log(summarize(collect(dir, { hours }), { cap, hours }));
+  console.log(summarize(collect(dir, { hours }), { cap, growth, hours }));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Links the cos, wiki, until-ready and security-audit skills, the history-reader agent and global CLAUDE.md into ~/.claude and
 # registers the hooks: the wrong-folder and chat-size warning (UserPromptSubmit) and the
-# until-ready gate (Stop), and sets CLAUDE_CODE_AUTO_COMPACT_WINDOW in settings.json env when unset. Safe to rerun. Pass --dry-run to only print actions.
+# until-ready gate (Stop), and sets CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000 in settings.json env when unset. Safe to rerun. Pass --dry-run to only print actions.
 set -eu
 
 DRY=0
@@ -86,9 +86,12 @@ const HOOKS = [
   { event: 'Stop', command: `node "${harness}/gate/qa-gate.mjs"`, timeout: 1800, ours: /gate\/qa-gate\.mjs"?$/ },
 ];
 
-// Settings env values set only when the owner has not set them. Compaction at 150k tokens is the fallback
-// behind the size warning in `cos.mjs hook` (the window setting accepts 100000 to 1000000).
-const ENV = { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '150000' };
+// Settings env values set only when the owner has not set them. A fresh desktop chat already holds 85k-123k tokens,
+// so a 150k window compacted after ~50k of real work. 300k leaves room for the size warning in `cos.mjs hook`
+// (80k of growth) to fire first; compaction is the fallback (the setting accepts 100000 to 1000000).
+const ENV = { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '300000' };
+// Values an earlier install.sh wrote; a rerun upgrades these but never touches a value the owner chose.
+const OLD_ENV = { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '150000' };
 
 const exists = fs.existsSync(file);
 const settings = exists ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
@@ -103,8 +106,8 @@ const todo = HOOKS.filter((h) => {
 
 const envTodo = Object.entries(ENV).filter(([k]) => {
   const have = settings.env?.[k];
-  if (have !== undefined) console.log(`already env ${k}=${have} in ${file}`);
-  return have === undefined;
+  if (have !== undefined && String(have) !== OLD_ENV[k]) console.log(`already env ${k}=${have} in ${file}`);
+  return have === undefined || String(have) === OLD_ENV[k];
 });
 
 if (!todo.length && !envTodo.length) {
