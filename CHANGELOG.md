@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-11-07, harness d781520
+
+- requests: usage work merged (#10)
+- Cut usage: size cap hook, compact status, stale worktrees, usage report (#10)
+- Handoff for the 11-08 hub chat
+- networking #11 #12 merged
+- requests: history on Haiku done
+- and 2 internal changes
+
 ## 2026-11-07, harness 0cd8ef0
 
 - Route chat-history reading through a Haiku history-reader subagent (#9)

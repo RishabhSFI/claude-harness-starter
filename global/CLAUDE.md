@@ -25,6 +25,9 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
   - One task per session. When a task ends in a PR, it's done; new work goes
     to a fresh session with a short brief, and the project's wiki page
     carries the history.
+  - Past ~120k tokens of history (the prompt hook warns), write a handoff
+    (plan, branch, next step) to the project's wiki page or a note and
+    continue in a fresh session.
   - Keep the main chat small: hand building, long reads and big outputs to
     subagents, and summarize what comes back.
   - Chat history goes through the `history-reader` subagent (Haiku):

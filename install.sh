@@ -1,7 +1,7 @@
 #!/bin/sh
 # Links the cos, wiki, until-ready and security-audit skills, the history-reader agent and global CLAUDE.md into ~/.claude and
-# registers the hooks: the wrong-folder warning (UserPromptSubmit) and the
-# until-ready gate (Stop). Safe to rerun. Pass --dry-run to only print actions.
+# registers the hooks: the wrong-folder and chat-size warning (UserPromptSubmit) and the
+# until-ready gate (Stop), and sets CLAUDE_CODE_AUTO_COMPACT_WINDOW in settings.json env when unset. Safe to rerun. Pass --dry-run to only print actions.
 set -eu
 
 DRY=0
@@ -86,6 +86,10 @@ const HOOKS = [
   { event: 'Stop', command: `node "${harness}/gate/qa-gate.mjs"`, timeout: 1800, ours: /gate\/qa-gate\.mjs"?$/ },
 ];
 
+// Settings env values set only when the owner has not set them. Compaction at 150k tokens is the fallback
+// behind the size warning in `cos.mjs hook` (the window setting accepts 100000 to 1000000).
+const ENV = { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '150000' };
+
 const exists = fs.existsSync(file);
 const settings = exists ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
 settings.hooks ??= {};
@@ -97,12 +101,23 @@ const todo = HOOKS.filter((h) => {
   return !current;
 });
 
-if (!todo.length) {
+const envTodo = Object.entries(ENV).filter(([k]) => {
+  const have = settings.env?.[k];
+  if (have !== undefined) console.log(`already env ${k}=${have} in ${file}`);
+  return have === undefined;
+});
+
+if (!todo.length && !envTodo.length) {
   // nothing to write
 } else if (dry === '1') {
   for (const h of todo) console.log(`[dry-run] added hook ${h.command} to ${file}`);
+  for (const [k, v] of envTodo) console.log(`[dry-run] set env ${k}=${v} in ${file}`);
 } else {
   if (exists) fs.copyFileSync(file, `${file}.bak`);
+  for (const [k, v] of envTodo) {
+    settings.env = { ...settings.env, [k]: v };
+    console.log(`set env ${k}=${v} in ${file}`);
+  }
   for (const h of todo) {
     const groups = settings.hooks[h.event] ?? [];
     for (const g of groups) g.hooks = (g.hooks ?? []).filter((x) => !h.ours.test(x.command ?? ''));

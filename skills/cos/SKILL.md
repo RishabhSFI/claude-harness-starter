@@ -78,7 +78,11 @@ than a day, say so plainly at the top of the next brief.
 
 ## On every /cos (and the first message of a hub session)
 
-1. Run `node H/cos.mjs status`. It reads every checkout and starts with
+1. Run `node H/cos.mjs status` (compact: worktrees show as a count plus the
+   ones with unmerged work, uncommitted files or an open PR; `--full` lists
+   every worktree). `node H/cos.mjs worktrees` lists stale worktrees (merged
+   or gone from the remote, nothing uncommitted) and removes them only with
+   `--remove`; `node H/cos.mjs usage` shows where the usage goes. Status reads every checkout and starts with
    **Needs you**, then **Ready for your review** (PRs into a public branch)
    and **Chief of Staff can merge** (PRs into private branches with green
    checks). Missing required secrets (declared per project in `projects.json`
@@ -168,7 +172,9 @@ has the step), fix confirmed high or critical findings, and list the rest in
 the PR under "Security audit".
 
 Keep this chat small: delegate building and long reads, don't end a turn
-just to say you're waiting, and stop once the PR is open. Read chat history
+just to say you're waiting, and stop once the PR is open. Past about 120k
+tokens of history (the prompt hook warns you), write your state to the
+project's wiki page or a handoff note and continue in a fresh session. Read chat history
 (other sessions' transcripts, saved tool-result files) only through the
 `history-reader` subagent, except a status peek of 4 events or fewer. Size
 the review: Sonnet for small, low-risk diffs; Opus for large or risky ones.

@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_DESKTOP_DIR, DEFAULT_PROJECTS_DIR, findPaused, markResumed } from './limits.mjs';
 import { USER_FILES } from './starter-update.mjs';
 import { uptimeWarningOn } from './uptime.mjs';
+import { sizeWarning } from './size-guard.mjs';
+import { baseRefOf, hasOpenWork, inspectWorktree, linkedWorktrees, removeWorktree, staleReason } from './worktrees.mjs';
 import { attachSecretsToStatus, parseSecrets, resolveSecrets, renderSecrets, secretsJson, writeSecretsPage } from './secrets.mjs';
 
 const SELF_DIR = dirname(fileURLToPath(import.meta.url));
@@ -321,7 +323,7 @@ function collectCheckout(path, { useGh, fakePrs, fakeMerged }) {
   const status = git(path, 'status', '--porcelain');
   if (status.ok) {
     const lines = status.out ? status.out.split('\n') : [];
-    s.dirty = { count: lines.length, files: lines.slice(0, 5).map((l) => l.slice(3)) };
+    s.dirty = { count: lines.length, files: lines.slice(0, 3).map((l) => l.slice(3)) };
   } else s.notes.push(`git status failed: ${status.err}`);
 
   const counts = git(path, 'rev-list', '--left-right', '--count', 'HEAD...@{u}');
@@ -334,6 +336,8 @@ function collectCheckout(path, { useGh, fakePrs, fakeMerged }) {
   }
 
   s.worktrees = listWorktrees(path);
+  const baseRef = baseRefOf(path);
+  for (const w of s.worktrees) Object.assign(w, inspectWorktree(path, w, baseRef));
   s.hasGate = existsSync(join(path, '.claude', 'gate.json'));
   try {
     s.activeGates = readdirSync(join(path, '.claude', 'loop')).filter((f) => f.endsWith('.json')).length;
@@ -412,7 +416,7 @@ function gatherStatus(projects, opts) {
 
 const tilde = (p) => (p.startsWith(homedir()) ? `~${p.slice(homedir().length)}` : p);
 
-function describeCheckout(c) {
+function describeCheckout(c, { full = false } = {}) {
   if (!c.exists) return 'missing';
   if (!c.isGit) return 'not a git repo';
   const parts = [`branch ${c.branch ?? '(detached)'}${c.defaultBranch ? ` (default ${c.defaultBranch})` : ''}`];
@@ -420,11 +424,24 @@ function describeCheckout(c) {
   parts.push(c.ahead === null ? 'no upstream' : `ahead ${c.ahead} / behind ${c.behind}`);
   if (c.lastCommit) parts.push(`last commit ${c.lastCommit.age}: ${c.lastCommit.subject}`);
   parts.push(c.hasGate ? `gate yes (${c.activeGates} active)` : 'gate no');
-  if (c.worktrees.length) parts.push(`worktrees: ${c.worktrees.map((w) => `${tilde(w.path)} [${w.branch ?? 'detached'}]`).join(', ')}`);
+  if (c.worktrees.length) {
+    if (full) parts.push(`worktrees: ${c.worktrees.map((w) => `${tilde(w.path)} [${w.branch ?? 'detached'}]`).join(', ')}`);
+    else {
+      const open = c.worktrees.filter((w) => hasOpenWork(w) || prBranches(c).has(w.branch));
+      parts.push(`worktrees: ${c.worktrees.length}${open.length ? `, ${open.length} with open work (${open.slice(0, 4).map(describeWorktree).join(', ')}${open.length > 4 ? ', ...' : ''})` : ', none with open work'}`);
+    }
+  }
   if (c.prs.length) {
     parts.push(`PRs: ${c.prs.map((pr) => `#${pr.number} ${pr.title}${pr.failingChecks.length ? ' (failing)' : ''}${pr.isDraft ? ' (draft)' : ''}`).join('; ')}`);
   }
   return parts.join('; ');
+}
+
+const prBranches = (c) => new Set(c.prs.map((pr) => pr.branch));
+
+function describeWorktree(w) {
+  const bits = [!w.merged && w.ahead > 0 ? `${w.ahead} unmerged` : null, w.dirty > 0 ? `${w.dirty} uncommitted` : null].filter(Boolean);
+  return `${w.branch ?? basename(w.path)}${bits.length ? ` ${bits.join(', ')}` : ' open PR'}`;
 }
 
 export function describePublic(surface, defaultBranch = 'main') {
@@ -448,7 +465,7 @@ function prSection(report, classification, heading) {
   return items.length ? [heading, '', ...items, ''] : [];
 }
 
-export function renderStatus(report, notices = []) {
+export function renderStatus(report, notices = [], { full = false } = {}) {
   const needs = [
     ...notices.map((n) => `- ${n}`),
     ...report.flatMap((p) =>
@@ -468,7 +485,7 @@ export function renderStatus(report, notices = []) {
   for (const p of report) {
     lines.push(`## ${p.name}`, '', p.what, '', describePublic(p.public, p.checkouts[0]?.defaultBranch ?? undefined), '');
     for (const c of p.checkouts) {
-      lines.push(`- \`${tilde(c.path)}\`: ${describeCheckout(c)}`);
+      lines.push(`- \`${tilde(c.path)}\`: ${describeCheckout(c, { full })}`);
       for (const note of c.notes ?? []) lines.push(`  - note: ${note}`);
     }
     lines.push('');
@@ -552,7 +569,52 @@ function cmdStatus(projects, flags, _positional, registryFile) {
   const machine = { uptimeDays: Math.floor(uptimeSec / 86_400), warning: uptimeWarningOn(fakeUptime === undefined ? process.platform : 'darwin', uptimeSec) };
   const drift = scheduledDrift(process.env.COS_SCHEDULED_DIR ?? join(homedir(), '.claude', 'scheduled-tasks'));
   if (flags.json) console.log(JSON.stringify(projects.length ? { machine, scheduledDrift: drift, projects: report } : { projects: report }, null, 2));
-  else console.log(renderStatus(report, [machine.warning, ...drift.map((d) => d.message)].filter(Boolean)));
+  else console.log(renderStatus(report, [machine.warning, ...drift.map((d) => d.message)].filter(Boolean), { full: flags.full === true }));
+}
+
+/** Linked worktrees whose work is already in the default branch (or whose remote branch is gone) and that hold nothing uncommitted. */
+export function findStaleWorktrees(projects, { now = Date.now(), skip = [] } = {}) {
+  const registered = new Set(projects.flatMap((p) => p.checkouts.map(canonical)));
+  const seen = new Set(skip.map(canonical));
+  const stale = [];
+  let total = 0;
+  for (const p of projects) {
+    for (const checkout of p.checkouts.filter((c) => existsSync(join(c, '.git')))) {
+      const baseRef = baseRefOf(checkout);
+      for (const wt of linkedWorktrees(checkout)) {
+        const key = canonical(wt.path);
+        if (registered.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        total++;
+        const info = inspectWorktree(checkout, wt, baseRef, now);
+        const reason = staleReason(info);
+        if (reason) stale.push({ project: p.id, repo: checkout, path: wt.path, branch: wt.branch, reason });
+      }
+    }
+  }
+  return { stale, total };
+}
+
+function cmdWorktrees(projects, flags) {
+  const { stale, total } = findStaleWorktrees(projects, { skip: [process.cwd()] });
+  if (flags.json && !flags.remove) {
+    console.log(JSON.stringify({ total, stale }, null, 2));
+    return;
+  }
+  console.log(`${stale.length} of ${total} linked worktrees are stale (merged or gone from the remote, nothing uncommitted, older than a day).`);
+  for (const w of stale) console.log(`- ${w.project}: ${tilde(w.path)} (${w.reason})`);
+  if (!stale.length) return;
+  if (!flags.remove) {
+    console.log('Nothing removed. Rerun with --remove to remove them (git refuses any that gained changes).');
+    return;
+  }
+  let removed = 0;
+  for (const w of stale) {
+    const r = removeWorktree(w.repo, w.path);
+    if (r.ok) removed++;
+    else console.log(`- not removed: ${tilde(w.path)}`);
+  }
+  console.log(`Removed ${removed} of ${stale.length}.`);
 }
 
 function cmdSecrets(projects, flags, _positional, registryFile) {
@@ -1005,23 +1067,33 @@ function cmdFf(projects, flags, positional) {
   finish(lines.join(' '), 0);
 }
 
-function cmdHook(projects, flags) {
-  const { prompt, cwd } = JSON.parse(readFileSync(0, 'utf8'));
-  if (typeof prompt !== 'string' || typeof cwd !== 'string') return;
+function routeNote(projects, flags, prompt, cwd) {
   const harness = canonical(flags.harness || SELF_DIR);
   const here = canonical(cwd);
   for (const hub of [harness, `${harness}-tasks`]) {
-    if (here === hub || here.startsWith(hub + sep)) return;
+    if (here === hub || here.startsWith(hub + sep)) return null;
   }
   const own = owningProject(projects, cwd);
   const scores = scoreProjects(projects, prompt, { strongOnly: true });
   const routed = bestProject(scores);
-  if (!routed || routed.id === own?.id) return;
-  if (own && scores.find((s) => s.project.id === own.id).score > 0) return;
-  console.log(
+  if (!routed || routed.id === own?.id) return null;
+  if (own && scores.find((s) => s.project.id === own.id).score > 0) return null;
+  return (
     `This message looks like ${routed.name} work (${routed.checkouts[0]}), but this session is in ${own?.name ?? basename(here)}. ` +
-      'Before doing anything, tell the owner and offer to switch folders (change_directory) or start a session there.',
+    'Before doing anything, tell the owner and offer to switch folders (change_directory) or start a session there.'
   );
+}
+
+function cmdHook(projects, flags) {
+  const input = JSON.parse(readFileSync(0, 'utf8'));
+  const { prompt, cwd } = input;
+  const notes = [];
+  try {
+    notes.push(sizeWarning({ transcriptPath: input.transcript_path, sessionId: input.session_id }));
+  } catch {}
+  if (typeof prompt === 'string' && typeof cwd === 'string') notes.push(routeNote(projects, flags, prompt, cwd));
+  const out = notes.filter(Boolean).join('\n\n');
+  if (out) console.log(out);
 }
 
 function main() {
@@ -1066,6 +1138,11 @@ function main() {
     return;
   }
 
+  if (command === 'usage') {
+    import('./usage-report.mjs').then((u) => u.main(rest));
+    return;
+  }
+
   if (command === 'mc') {
     import('./mc/server.mjs').then((mc) => mc.main(rest));
     return;
@@ -1080,9 +1157,9 @@ function main() {
     return;
   }
 
-  const commands = { status: cmdStatus, route: cmdRoute, secrets: cmdSecrets, paused: cmdPaused, ff: cmdFf };
+  const commands = { status: cmdStatus, worktrees: cmdWorktrees, route: cmdRoute, secrets: cmdSecrets, paused: cmdPaused, ff: cmdFf };
   if (!commands[command]) {
-    console.error('usage: cos.mjs status [--json] [--no-gh] [--cached-secrets] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | retire <id> | route "<text>" [--json] | ff <folder> <sync-branch> <target-branch> [--json] | learned | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | mc [--port 4747] | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run]   (--registry <path>)');
+    console.error('usage: cos.mjs status [--json] [--no-gh] [--cached-secrets] [--full] | worktrees [--json] [--remove] | usage [--hours 48] [--cap 120000] [--projects-dir <dir>] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | retire <id> | route "<text>" [--json] | ff <folder> <sync-branch> <target-branch> [--json] | learned | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | mc [--port 4747] | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run]   (--registry <path>)');
     process.exitCode = 2;
     return;
   }
