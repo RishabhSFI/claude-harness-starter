@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-07, harness 0cd8ef0
+
+- Route chat-history reading through a Haiku history-reader subagent (#9)
+- requests: history reads on Haiku
+- wiki: networking #10 merged
+- requests: CRM link emailed to Matthew
+- requests: Matthew added to the CRM team
+- requests: CEO Inspections research done
+- wiki: fix link
+- requests: Firebase CRM, networking empty runs
+- Harness review 2026-11-06
+- Workflow cleanup merged; scheduled tasks updated
+- and 34 internal changes
+
 ## 2026-11-06, harness 2769429
 
 - feat(cos): retire, ff and learned commands; uptime and scheduled-task drift lines; batched merges in the hub (#8)

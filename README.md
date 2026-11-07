@@ -14,6 +14,9 @@ What's in here:
   until the checks pass (`/until-ready`). `gate/security-audit.mjs` and
   `skills/security-audit/` (Cloudflare's skill, MIT) add a security audit of
   each change as one gate step.
+- `agents/history-reader.md`: a Haiku subagent that reads and searches chat
+  history and returns a short answer, so long chats stay small. `install.sh`
+  links it to `~/.claude/agents/`.
 - `global/CLAUDE.md`: rules for every session.
 - `wiki.mjs`, `skills/wiki/` and `starter-wiki/`: a wiki your sessions keep,
   so facts survive from one chat to the next.

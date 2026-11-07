@@ -4,6 +4,8 @@ Per-role model overrides for pstack skills. Each pstack SKILL.md names its defau
 
 Chosen 2026-11-05 from a usage measurement (claude-harness/reports/usage-2026-11-05.md): routine building and parallel workers on Sonnet, judgment and hard debugging on Opus.
 
+Chat-history reading (the recall skill's "fast, cheap model" miners, what-did-i-get-done, any transcript search) runs on haiku through the harness's history-reader agent. pstack has no role line for it, so the rule lives in CLAUDE.md.
+
 feature, refactoring: sonnet
 bug-fix: opus
 perf-issue: opus

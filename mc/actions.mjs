@@ -68,8 +68,10 @@ the report. If the project has no .claude/gate.json, draft one from its
 real checks and commit it with the work.
 
 Keep this chat small: delegate building and long reads, don't end a turn
-just to say you're waiting, and stop once the PR is open. Size the review:
-Sonnet for small, low-risk diffs; Opus for large or risky ones.
+just to say you're waiting, and stop once the PR is open. Read chat history
+(other sessions' transcripts, saved tool-result files) only through the
+\`history-reader\` subagent, except a status peek of 4 events or fewer. Size
+the review: Sonnet for small, low-risk diffs; Opus for large or risky ones.
 
 Use the task slug mc-${task.id}, so your branch is ${task.branch}. You start
 in your own worktree, already on that branch; other queue tasks may be

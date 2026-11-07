@@ -27,6 +27,11 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
     carries the history.
   - Keep the main chat small: hand building, long reads and big outputs to
     subagents, and summarize what comes back.
+  - Chat history goes through the `history-reader` subagent (Haiku):
+    reading or searching other sessions' transcripts, cloud run events,
+    `~/.claude/projects` files and big saved tool-result files. Never read
+    them in the main chat. The one exception is a status peek of 4 events or
+    fewer on one session.
   - While waiting on a helper, end the turn without a status-only message;
     write to the owner when there's something to report or decide.
   - Size reviews: a Sonnet reviewer for small, low-risk diffs (under about
