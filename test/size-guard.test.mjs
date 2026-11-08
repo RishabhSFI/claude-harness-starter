@@ -138,4 +138,23 @@ describe('size guard', () => {
     assert.equal(run(transcript('long.jsonl', [reply(60_000), reply(310_000)]), 'h-long').stdout, '');
     assert.equal(run(transcript('short.jsonl', [reply(5_000), reply(9_000)]), 'h-short').stdout, '');
   });
+  test('the hub warns at 40k of growth, workers at 80k, and the hub message says to stop', () => {
+    const p = transcript('hub.jsonl', [reply(50_000), reply(100_000)]);
+    assert.equal(sizeWarning({ transcriptPath: p, sessionId: 's-hub-w', stateDir: state }), null);
+    const hub = sizeWarning({ transcriptPath: p, sessionId: 's-hub-h', stateDir: state, hub: true });
+    assert.match(hub, /hub chat/);
+    assert.match(hub, /fresh \/cos/);
+  });
+
+  test('the hook treats the harness folder as the hub and a worktree under it as a worker', () => {
+    const p = transcript('hubhook.jsonl', [reply(50_000), reply(100_000)]);
+    const run = (cwd, id) =>
+      spawnSync('node', [join(ROOT, 'cos.mjs'), 'hook'], {
+        input: JSON.stringify({ prompt: 'hello', cwd, transcript_path: p, session_id: id }),
+        env: { ...process.env, COS_SIZE_STATE_DIR: join(tmp, 'hub-state') },
+        encoding: 'utf8',
+      });
+    assert.match(run(ROOT, 'hh-hub').stdout, /hub chat/);
+    assert.equal(run(tmp, 'hh-other').stdout, '');
+  });
 });

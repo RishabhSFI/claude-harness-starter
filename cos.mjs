@@ -1084,12 +1084,17 @@ function routeNote(projects, flags, prompt, cwd) {
   );
 }
 
+// The hub is the session started in the harness folder itself, not a worktree under it.
+const isHubCwd = (cwd) => {
+  try { return typeof cwd === 'string' && realpathSync(cwd) === realpathSync(SELF_DIR); } catch { return false; }
+};
+
 function cmdHook(projects, flags) {
   const input = JSON.parse(readFileSync(0, 'utf8'));
   const { prompt, cwd } = input;
   const notes = [];
   try {
-    notes.push(sizeWarning({ transcriptPath: input.transcript_path, sessionId: input.session_id }));
+    notes.push(sizeWarning({ transcriptPath: input.transcript_path, sessionId: input.session_id, hub: isHubCwd(cwd) }));
   } catch {}
   if (typeof prompt === 'string' && typeof cwd === 'string') notes.push(routeNote(projects, flags, prompt, cwd));
   const out = notes.filter(Boolean).join('\n\n');

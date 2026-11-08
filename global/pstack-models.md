@@ -13,7 +13,7 @@ hillclimb: opus
 judgment and prose: opus
 strongest judgment: opus
 how explorer: sonnet
-how explainer: opus
+how explainer: sonnet
 why investigators: sonnet
 why synthesizer: opus
 reflect tooling: sonnet

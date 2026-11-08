@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-08, harness 782a063
+
+- Cut token use: Sonnet workers, no status-only turn ends, hub rules, earlier hub size warning (#12)
+- requests: token use plan from the owner's Grok notes
+- Handoff: F5 needs a fresh worker
+- log: size-guard merged (#11)
+- and 10 internal changes
+
 ## 2026-11-07, harness 86221d0
 
 - requests: chats archived, auto-archive on, size-guard PR #11

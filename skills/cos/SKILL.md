@@ -135,6 +135,8 @@ than a day, say so plainly at the top of the next brief.
    when it changes what they do.
 3. Otherwise start one with `mcp__ccd_session__start_session`:
    - `initiation: "user_asked"`, `context: "fresh"`,
+     `model: "sonnet"` (always set it; an unset model inherits the hub's Opus.
+     Opus only for reviews of risky diffs and hard bugs),
      `permission_mode: "auto"` (the owner wants no stalls),
      `cwd`: the project's first checkout (when a project lists more than
      one, the one the task is about), `use_worktree: true` for anything that changes
@@ -148,7 +150,18 @@ than a day, say so plainly at the top of the next brief.
 
 Several projects in one request: start one session per project in the same
 message. Never two sessions writing in the same project at once unless each
-has its own worktree.
+has its own worktree. Cap at 3 workers at once. Before going past 3, run `node H/cos.mjs
+usage` (or the session usage tool), say the expected cost in one line, and
+go past 3 only if the owner asks for more.
+
+Hub rules (every worker turn end wakes this chat, so it grows fast):
+- Answer a status-only worker note with nothing, or one line at most.
+- When the size hook warns, the only allowed action is writing the handoff
+  and telling the owner to start a fresh `/cos`. The hook warns the hub at
+  40k of growth, earlier than workers.
+- The owner can turn off connectors they don't use (Vercel, flovia, Claude
+  Docs, iOS simulator) to shrink every new chat's start. Don't change their
+  settings.
 
 ### Worker brief
 
@@ -171,8 +184,11 @@ Before the PR, run `node <H>/gate/security-audit.mjs` (skip it if the gate
 has the step), fix confirmed high or critical findings, and list the rest in
 the PR under "Security audit".
 
-Keep this chat small: delegate building and long reads, don't end a turn
-just to say you're waiting, and stop once the PR is open. Once the chat has grown
+Keep this chat small: delegate building and long reads. End your turn only
+when the PR is open, you're blocked, or you have a question for the owner or
+hub; every turn end wakes the hub, which re-reads its whole chat. While
+helpers run, wait in the foreground (blocking Agent calls, Monitor
+until-loops); never end a turn with a status-only message. Once the chat has grown
 about 80k tokens past its own starting size (the prompt hook warns you), write your state to the
 project's wiki page or a handoff note and continue in a fresh session. Read chat history
 (other sessions' transcripts, saved tool-result files) only through the

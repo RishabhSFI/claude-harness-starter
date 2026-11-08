@@ -68,7 +68,9 @@ the report. If the project has no .claude/gate.json, draft one from its
 real checks and commit it with the work.
 
 Keep this chat small: delegate building and long reads, don't end a turn
-just to say you're waiting, and stop once the PR is open. Read chat history
+just to say you're waiting (wait in the foreground: blocking Agent calls,
+Monitor until-loops), and end your turn only when the PR is open, you're
+blocked, or you have a question. Read chat history
 (other sessions' transcripts, saved tool-result files) only through the
 \`history-reader\` subagent, except a status peek of 4 events or fewer. Size
 the review: Sonnet for small, low-risk diffs; Opus for large or risky ones.
@@ -168,7 +170,7 @@ export async function startTask(ctx, task, project) {
   if (!tree.ok) return { ok: false, limit: false, message: tree.message };
   const cwd = tree.dir;
   const brief = buildBrief({ task, project, harnessDir: ctx.harnessDir, repo: await originRepo(project) });
-  const r = await exec(ctx.claudeBin, ['--bg', '-n', task.sessionName, '--permission-mode', 'auto', brief], { cwd, timeout: CLAUDE_TIMEOUT_MS });
+  const r = await exec(ctx.claudeBin, ['--bg', '-n', task.sessionName, '--model', 'sonnet', '--permission-mode', 'auto', brief], { cwd, timeout: CLAUDE_TIMEOUT_MS });
   if (!r.ok) {
     const limit = isLimitMessage(`${r.out}\n${r.err}`);
     logAction(ctx, 'start', { taskId: task.id, project: project.id, ok: false, limit });

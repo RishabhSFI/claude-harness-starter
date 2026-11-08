@@ -319,6 +319,11 @@ describe('worker brief', () => {
     assert.match(brief, new RegExp(`your branch is ${t.branch}`));
   });
 
+  test('tells the worker to wait in the foreground, not end turns on status', () => {
+    assert.match(brief, /Monitor\s+until-loops/);
+    assert.match(brief, /only when the PR is open, you're\s+blocked, or you have a question/);
+  });
+
   test("includes the project's public rules", () => {
     assert.match(brief, /Release rules for this project: main on origin; pushes to site; emails signups\./);
   });

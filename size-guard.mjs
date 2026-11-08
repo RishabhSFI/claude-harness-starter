@@ -7,6 +7,8 @@ import { join } from 'node:path';
 // A chat starts at 85k-123k tokens in the desktop app (system prompt, tools, skills), so the warning
 // measures growth over the chat's own first reply. The backstop covers a chat whose baseline is unknown.
 export const GROWTH_WARN = 80_000;
+// The hub re-reads its history on every worker note, so it warns sooner than a worker.
+export const HUB_GROWTH_WARN = 40_000;
 export const BACKSTOP = 250_000;
 export const REWARN_STEP = 60_000;
 const CHUNK_BYTES = 1024 * 1024;
@@ -59,14 +61,16 @@ export function firstHistory(transcriptPath) {
 
 export const defaultStateDir = () => process.env.COS_SIZE_STATE_DIR || join(homedir(), '.claude', 'size-warned');
 
-export function sizeMessage(tokens, baseline = null) {
+export function sizeMessage(tokens, baseline = null, hub = false) {
   const total = `about ${Math.round(tokens / 1000)}k tokens`;
   const grown = baseline === null ? total : `${total}, up ${Math.round((tokens - baseline) / 1000)}k from ${Math.round(baseline / 1000)}k when it started`;
+  if (hub) return `This hub chat's history is ${grown}, and every worker note makes it re-read all of it. Do nothing else now: write the handoff (what is in flight, branches, next step) and tell the owner to start a fresh /cos. Don't start workers or answer status-only notes.`;
   return `This chat's history is ${grown}, and every reply re-reads all of it. Before doing more, write your state (goal, branch, what's done, next step) to the project's wiki page or a handoff note, tell the owner it is saved, and continue the work in a fresh session with a short brief (start_session if you have it; otherwise ask the owner to open one). Don't start new work in this chat.`;
 }
 
 /** The message to inject, or null. Warns at GROWTH_WARN over the chat's first reply (re-based when compaction shrinks it) (BACKSTOP when that is unknown), then again each REWARN_STEP above the last warning. */
-export function sizeWarning({ transcriptPath, sessionId, stateDir = defaultStateDir() }) {
+export function sizeWarning({ transcriptPath, sessionId, stateDir = defaultStateDir(), hub = false }) {
+  const growthWarn = hub ? HUB_GROWTH_WARN : GROWTH_WARN;
   if (typeof transcriptPath !== 'string' || !/^[\w.-]+$/.test(String(sessionId ?? ''))) return null;
   const tokens = latestHistory(transcriptPath);
   if (tokens === null) return null;
@@ -80,7 +84,7 @@ export function sizeWarning({ transcriptPath, sessionId, stateDir = defaultState
   if (baseline !== null && baseline !== saved) {
     try { mkdirSync(join(stateDir, 'base'), { recursive: true }); writeFileSync(baseFile, String(baseline)); } catch {}
   }
-  if (baseline === null ? tokens < BACKSTOP : tokens - baseline < GROWTH_WARN) return null;
+  if (baseline === null ? tokens < BACKSTOP : tokens - baseline < growthWarn) return null;
   let last = 0;
   try { last = Number(readFileSync(marker, 'utf8')) || 0; } catch {}
   if (tokens < last) last = 0;
@@ -89,5 +93,5 @@ export function sizeWarning({ transcriptPath, sessionId, stateDir = defaultState
     mkdirSync(stateDir, { recursive: true });
     writeFileSync(marker, String(tokens));
   } catch {}
-  return sizeMessage(tokens, baseline);
+  return sizeMessage(tokens, baseline, hub);
 }

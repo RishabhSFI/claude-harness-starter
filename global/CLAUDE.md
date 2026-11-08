@@ -36,8 +36,11 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
     `~/.claude/projects` files and big saved tool-result files. Never read
     them in the main chat. The one exception is a status peek of 4 events or
     fewer on one session.
-  - While waiting on a helper, end the turn without a status-only message;
-    write to the owner when there's something to report or decide.
+  - A worker ends its turn only when its PR is ready, it's blocked, or it has
+    a question for the owner or hub. Every turn end wakes the hub, which
+    re-reads its whole chat. While helpers run, wait in the foreground
+    (blocking Agent calls, Monitor until-loops); never end a turn with a
+    status-only message.
   - Size reviews: a Sonnet reviewer for small, low-risk diffs (under about
     150 lines, no auth, money, data deletion or merge logic); an Opus
     reviewer for large or risky ones.
