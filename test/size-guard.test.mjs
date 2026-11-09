@@ -58,7 +58,8 @@ describe('size guard', () => {
     const args = (read) => ({ transcriptPath: transcript('grow.jsonl', [reply(90_000), reply(read)]), sessionId: 's-grow', stateDir: state });
     const first = sizeWarning(args(175_000));
     assert.match(first, /about 176k tokens, up 85k from 91k when it started/);
-    assert.match(first, /fresh session/);
+    assert.match(first, /keep working in this same chat/);
+    assert.doesNotMatch(first, /fresh session/);
     assert.equal(sizeWarning(args(200_000)), null);
     assert.equal(sizeWarning(args(234_000)), null);
     assert.match(sizeWarning(args(236_000)), /about 237k tokens, up 146k from 91k/);
@@ -138,12 +139,13 @@ describe('size guard', () => {
     assert.equal(run(transcript('long.jsonl', [reply(60_000), reply(310_000)]), 'h-long').stdout, '');
     assert.equal(run(transcript('short.jsonl', [reply(5_000), reply(9_000)]), 'h-short').stdout, '');
   });
-  test('the hub warns at 40k of growth, workers at 80k, and the hub message says to stop', () => {
+  test('the hub warns at 40k of growth, workers at 80k, and the hub message says to keep working here', () => {
     const p = transcript('hub.jsonl', [reply(50_000), reply(100_000)]);
     assert.equal(sizeWarning({ transcriptPath: p, sessionId: 's-hub-w', stateDir: state }), null);
     const hub = sizeWarning({ transcriptPath: p, sessionId: 's-hub-h', stateDir: state, hub: true });
     assert.match(hub, /hub chat/);
     assert.match(hub, /never start another hub/);
+    assert.match(hub, /keep working in this chat/);
   });
 
   test('the hook treats the harness folder as the hub and a worktree under it as a worker', () => {

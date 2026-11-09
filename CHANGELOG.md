@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-09, harness 7c15ec3
+
+- Workers keep working at the chat-size warning instead of stopping (#15)
+
 ## 2026-11-09, harness a1d8ba1
 
 - Leave mission control out of the starter (#14)

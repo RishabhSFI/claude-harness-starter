@@ -205,7 +205,8 @@ hub; every turn end wakes the hub, which re-reads its whole chat. While
 helpers run, wait in the foreground (blocking Agent calls, Monitor
 until-loops); never end a turn with a status-only message. Once the chat has grown
 about 80k tokens past its own starting size (the prompt hook warns you), write your state to the
-project's wiki page or a handoff note and continue in a fresh session. Read chat history
+project's wiki page or the notes folder, then keep working in this same chat
+(the app compacts it). Never end a turn because of the size warning. Read chat history
 (other sessions' transcripts, saved tool-result files) only through the
 `history-reader` subagent, except a status peek of 4 events or fewer. Size
 the review: Sonnet for small, low-risk diffs; Opus for large or risky ones.
