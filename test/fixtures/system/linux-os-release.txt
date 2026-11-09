@@ -1,3 +1,0 @@
-NAME="Ubuntu"
-VERSION_ID="24.04"
-PRETTY_NAME="Ubuntu 24.04 LTS"

@@ -31,7 +31,7 @@ chat at its 300k window (`install.sh` sets it), so it can run indefinitely.
 When you start (or after a compaction), read, in order:
 `H/wiki/topics/owner-requests.md`, the newest
 `H/reports/cos-handoff-<date>.md` (`ls H/reports/cos-handoff-* | tail -1`),
-the latest brief `H/reports/cos-<date>.md`, then mission control and the
+the latest brief `H/reports/cos-<date>.md`, then the
 wiki pages those name.
 
 The handoff is for recovery if this chat is ever lost, not for rollover.
@@ -303,15 +303,15 @@ from the worker's report or this chat get ingested first, so the page can
 cite them (see the wiki skill). Commit the wiki changes in `H`.
 
 `node H/wiki.mjs record <project-id> --pr <owner/repo#n>` keeps each project
-page's Changes list current on every merge (mission control and the daily
-review run it), so write only what a PR can't say: decisions, what's open,
+page's Changes list current on every merge (the daily
+review runs it), so write only what a PR can't say: decisions, what's open,
 judgment.
 
 ## Retired projects
 
 When the owner says to stop working on a project, run `node H/cos.mjs retire
 <id>`. It moves the project to `retired` in `projects.json` with the date, so
-status, routing and mission control stop listing it. Its wiki page stays.
+status and routing stop listing it. Its wiki page stays.
 Rerunning it is harmless. To bring one back, edit `projects.json` by hand.
 
 ## New projects
@@ -343,20 +343,6 @@ When the owner wants to start something new:
    gate once there is code, and to fill in "What's public" in its CLAUDE.md
    when a deploy exists. Update `public` in `projects.json` to match.
 
-## Mission control
-
-`node H/cos.mjs mc` starts a local page (127.0.0.1:4747) with the same
-status, what every session is doing (its plan step, last action and last
-message, read from its transcript), PR lanes, usage per hour and a task
-queue. The queue is a second way
-to send work: it starts `claude --bg` sessions with this skill's worker
-brief, each in its own worktree (`<checkout>-tasks/mc-<id>`), with no limit
-on how many run at once unless the owner sets one. It keeps its tasks in
-`H/mc/state/queue.json`. Several tasks may work in one project at the same
-time; give any session you start there its own worktree too. Queue sessions show up in `claude agents` named `<project>:
-<title>`; treat their PRs like any worker's (check, then merge or list for
-review).
-
 ## Gates
 
 `/until-ready` loops only in projects with `.claude/gate.json`. When status
@@ -387,8 +373,7 @@ or the project, then add what you found to the wiki.
 - A blocked action (a permission prompt or auto mode refusal) goes to the
   owner as is. Never ask a worker to do what was refused here.
 - A production command auto mode blocks goes into the request's "Waiting on
-  the owner" row in backticks, the whole command on one line. Mission control
-  shows it as a copy button.
+  the owner" row in backticks, the whole command on one line.
 
 ## Daily brief
 

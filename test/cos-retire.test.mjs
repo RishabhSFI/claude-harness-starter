@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -118,7 +118,7 @@ describe('cos retire', () => {
     assert.match(r.stderr, /already registered/);
   });
 
-  test('the starter leak scan still catches a retired project', () => {
+  test('the starter leak scan still catches a retired project', { skip: !existsSync(join(ROOT, 'make-starter.mjs')) && 'the starter does not ship the generator' }, () => {
     const src = mkdtempSync(join(tmp, 'src-'));
     const files = { 'starter/README.md': '# Harness\n', 'notes.md': 'We shipped the Quuxbazzle app.\n', 'projects.json': '{"projects": [], "retired": []}\n' };
     for (const [path, text] of Object.entries(files)) {

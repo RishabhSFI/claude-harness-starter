@@ -640,7 +640,7 @@ function cmdPaused(projects, flags) {
   const opts = {
     projectsDir: flags['projects-dir'] ? resolve(expandHome(flags['projects-dir'])) : DEFAULT_PROJECTS_DIR,
     desktopDir: flags['desktop-dir'] ? resolve(expandHome(flags['desktop-dir'])) : DEFAULT_DESKTOP_DIR,
-    marksFile: flags['marks-file'] ? resolve(expandHome(flags['marks-file'])) : join(SELF_DIR, 'mc', 'state', 'resumed.json'),
+    marksFile: flags['marks-file'] ? resolve(expandHome(flags['marks-file'])) : existsSync(join(SELF_DIR, 'mc')) ? join(SELF_DIR, 'mc', 'state', 'resumed.json') : join(SELF_DIR, 'reports', 'resumed.json'),
     now: flags.now ? new Date(flags.now) : new Date(),
   };
   if (Number.isNaN(opts.now.getTime())) throw new UsageError('--now needs an ISO date');
@@ -815,7 +815,7 @@ export function ensureUserFiles(dir) {
   make('ledger.md', (f) => writeFileSync(f, '# Harness ledger\n\nOne row per lesson. The daily review updates it.\n'));
   make('wiki', (f) => (existsSync(join(dir, 'starter-wiki')) ? cpSync(join(dir, 'starter-wiki'), f, { recursive: true }) : mkdirSync(f)));
   make('reports', (f) => mkdirSync(f));
-  make('mc/state', (f) => mkdirSync(f));
+  if (existsSync(join(dir, 'mc'))) make('mc/state', (f) => mkdirSync(f));
   return made;
 }
 
@@ -1149,6 +1149,10 @@ function main() {
   }
 
   if (command === 'mc') {
+    if (!existsSync(join(SELF_DIR, 'mc', 'server.mjs'))) {
+      console.log('Mission control is not included in this install.');
+      return;
+    }
     import('./mc/server.mjs').then((mc) => mc.main(rest));
     return;
   }

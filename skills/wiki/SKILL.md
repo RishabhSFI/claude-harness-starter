@@ -43,8 +43,8 @@ A report, a research note, a chat extract, or something the owner told you:
 `node H/wiki.mjs record <project-id> --pr <owner/repo#n>` files a merged
 PR: its body goes to `raw/` (secrets blanked), and a dated bullet goes under
 `## Changes` at the end of the project's page, with `updated` and `log.md`
-kept in step. Rerunning it changes nothing. Mission control runs it after
-each merge and the daily review catches the rest, so don't write these
+kept in step. Rerunning it changes nothing. The daily review runs it after
+merges, so don't write these
 bullets by hand.
 
 ## Update a page

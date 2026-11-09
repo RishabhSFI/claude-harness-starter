@@ -20,8 +20,6 @@ What's in here:
 - `global/CLAUDE.md`: rules for every session.
 - `wiki.mjs`, `skills/wiki/` and `starter-wiki/`: a wiki your sessions keep,
   so facts survive from one chat to the next.
-- `mc/`: mission control, a local page showing every project and a task
-  queue (`node cos.mjs mc`).
 - `projects.json`: your project list, made empty on first run.
   `projects.example.json` shows a filled-in one. Projects you stop working
   on move to its `retired` list (`node cos.mjs retire <id>`).
@@ -126,7 +124,6 @@ and `.gitignore` lists them so they stay out of the harness history:
 - `wiki/`: your notes, made from `starter-wiki/` on the first run.
 - `ledger.md`: lessons the daily review keeps.
 - `reports/`: reports the Chief of Staff writes.
-- `mc/state/`: mission control's queue and settings.
 
 Install (or any `cos` command) creates the ones that are missing. If you
 want them backed up in your private repo, run `git add -f projects.json`

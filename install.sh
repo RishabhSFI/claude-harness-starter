@@ -69,7 +69,7 @@ fi
 
 # Your own files (projects.json, wiki/, ledger.md, reports/) are made when missing.
 if [ "$DRY" -eq 1 ]; then
-  say "would create any of projects.json, ledger.md, wiki/, reports/ and mc/state/ that are missing"
+  say "would create any of projects.json, ledger.md, wiki/ and reports/ that are missing"
 else
   node "$HERE/cos.mjs" init --harness "$HARNESS" || STATUS=1
 fi

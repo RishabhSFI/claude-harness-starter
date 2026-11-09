@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-09, harness a1d8ba1
+
+- Leave mission control out of the starter (#14)
+- Run workflows on the runner named in the RUNNER repo variable
+- cos: hub handoff afternoon 11-09
+- cos: hub handoff midday 11-09
+- Harness review 2026-11-09
+- cos: hub handoff update after merge-all
+- cos: overnight plan 11-09
+- cos: permanent hub handoff 11-09
+- and 3 internal changes
+
 ## 2026-11-09, harness 0a84bb4
 
 - cos: one permanent hub chat (#13)

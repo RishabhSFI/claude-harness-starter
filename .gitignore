@@ -2,7 +2,6 @@ reports/*.tmp
 __pycache__/
 .claude/loop/
 .claude/security-audit/
-mc/state/
 .claude/secrets-cache.json
 
 # Your files. The starter never ships them; they are yours to keep. Track them in
@@ -11,4 +10,3 @@ mc/state/
 /wiki/
 /reports/
 /ledger.md
-/mc/state/
