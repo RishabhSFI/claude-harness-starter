@@ -143,7 +143,7 @@ describe('size guard', () => {
     assert.equal(sizeWarning({ transcriptPath: p, sessionId: 's-hub-w', stateDir: state }), null);
     const hub = sizeWarning({ transcriptPath: p, sessionId: 's-hub-h', stateDir: state, hub: true });
     assert.match(hub, /hub chat/);
-    assert.match(hub, /fresh \/cos/);
+    assert.match(hub, /never start another hub/);
   });
 
   test('the hook treats the harness folder as the hub and a worktree under it as a worker', () => {

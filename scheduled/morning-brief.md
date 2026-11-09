@@ -1,7 +1,7 @@
 # Chief of Staff morning brief
 
 Prompt for a scheduled task that runs on weekdays. It writes the day's brief,
-which is also the handoff to that day's hub chat.
+which the one permanent hub chat reads. Never tell the owner to open a new hub.
 
 The owner creates the task; no session creates it on its own. Proposed
 schedule: weekdays (cron `0 8 * * 1-5`), task name `cos-morning-brief`,

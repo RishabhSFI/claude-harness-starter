@@ -28,7 +28,13 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
   - Once a chat has grown ~80k tokens past its own starting size (the prompt
     hook warns), write a handoff
     (plan, branch, next step) to the project's wiki page or a note and
-    continue in a fresh session.
+    continue in a fresh session. The exception is the Chief of Staff hub:
+    it is one permanent chat (its hook warns at 40k of growth). At the warning it writes the handoff
+    (`reports/cos-handoff-<date>.md`) and keeps working in the same chat; it
+    never starts another hub, since each one adds a top-level sidebar group.
+    Workers it starts are filed in the "Chief of Staff" sidebar group, and it
+    archives each one once its PR is merged (or done and waiting only on the
+    owner).
   - Keep the main chat small: hand building, long reads and big outputs to
     subagents, and summarize what comes back.
   - Chat history goes through the `history-reader` subagent (Haiku):

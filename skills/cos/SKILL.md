@@ -20,32 +20,45 @@ The project wiki, `H/wiki/`, carries facts between chats: one page per
 project (decisions, people, tools, open items), plus people, vendors and
 topics. `skills/wiki/SKILL.md` and `H/wiki/WIKI.md` say how it works.
 
-## A new hub chat each day
+## One permanent hub chat
 
-The hub chat is daily, so it never grows into a long chat that re-reads
-itself. Each morning the owner starts a new chat with `/cos`. That chat:
+There is one hub chat, and it never ends. The desktop sidebar nests every
+session under the session that started it, so a second hub makes a second
+top-level group and clutters the owner's sidebar. Never start another hub
+and never tell the owner to start a fresh `/cos`. The app auto-compacts the
+chat at its 300k window (`install.sh` sets it), so it can run indefinitely.
 
-1. Reads, in order: `H/wiki/topics/owner-requests.md`, the newest
-   `H/reports/cos-handoff-<date>.md` (`ls H/reports/cos-handoff-* | tail
-   -1`), today's brief `H/reports/cos-<date>.md` (or the latest one if
-   today's hasn't run), then mission control, and the wiki pages those
-   name.
-2. Works from the handoff: the workers in flight with their session ids,
-   what's waiting on the owner, what to check, and "What the last hub
-   learned".
-3. Finds workers an older hub chat started with
-   `mcp__ccd_session_mgmt__list_sessions` and a `list_events` status peek, and in
-   mission control's Work view. Their reports go to the old chat, so check
-   their PRs directly and their transcripts through the `history-reader`
-   subagent (see "Reading chat history") instead of waiting for a note.
+When you start (or after a compaction), read, in order:
+`H/wiki/topics/owner-requests.md`, the newest
+`H/reports/cos-handoff-<date>.md` (`ls H/reports/cos-handoff-* | tail -1`),
+the latest brief `H/reports/cos-<date>.md`, then mission control and the
+wiki pages those name.
 
-Before ending a day's last task, put anything the brief can't see (a
-decision, a promise to the owner) on the project's wiki page, and write the
-handoff: `H/reports/cos-handoff-<date>.md` with **In flight** (session id,
-state), **Waiting on the owner**, **To check**, and **What the last hub
-learned**. Carry that last section forward from the previous handoff, add
-what's new, and drop lines that a tool now does for you. `node H/cos.mjs
-learned` prints the newest one.
+The handoff is for recovery if this chat is ever lost, not for rollover.
+When the size hook warns, and at the end of each day's work, put anything
+the brief can't see (a decision, a promise to the owner) on the project's
+wiki page and write `H/reports/cos-handoff-<date>.md` with **In flight**
+(session id, state), **Waiting on the owner**, **To check**, and **What the
+last hub learned**. Carry that last section forward from the previous
+handoff, add what's new, and drop lines that a tool now does for you.
+`node H/cos.mjs learned` prints the newest one. Then keep working in this
+chat.
+
+If this chat was lost and the owner starts a replacement, that one becomes
+the permanent hub: it works from the handoff, finds workers with
+`mcp__ccd_session_mgmt__list_sessions` and a `list_events` status peek
+(through `history-reader` beyond that), and checks their PRs directly.
+
+### Keeping the sidebar clean
+
+- File every worker you start into the sidebar group "Chief of Staff":
+  `mcp__ccd_sidebar__list_groups`; if the group is missing,
+  `mcp__ccd_sidebar__create_group` with that name; then
+  `mcp__ccd_sidebar__move_sessions` with the new session's id.
+- Once you have verified a worker's PR merged, or its work is superseded or
+  done and its PR waits only on the owner, archive it with
+  `mcp__ccd_session_mgmt__archive_session`. Do it in the same turn you
+  verify, and say so in one line.
 
 ## Reading chat history
 
@@ -143,6 +156,8 @@ than a day, say so plainly at the top of the next brief.
      code, `false` for a question or review that only reads,
      `name`: the project id, `wake_when_done: true`.
    - `prompt`: the worker brief below.
+   - After it starts, file it into the "Chief of Staff" sidebar group (see
+     "Keeping the sidebar clean").
    - `background`: what the project is (from `projects.json`), its `public`
      list, and the owner's words.
 4. Tell the owner in one line: which project, which session (link it as
@@ -156,9 +171,9 @@ go past 3 only if the owner asks for more.
 
 Hub rules (every worker turn end wakes this chat, so it grows fast):
 - Answer a status-only worker note with nothing, or one line at most.
-- When the size hook warns, the only allowed action is writing the handoff
-  and telling the owner to start a fresh `/cos`. The hook warns the hub at
-  40k of growth, earlier than workers.
+- When the size hook warns, write the handoff, then keep working in this
+  chat; never start another hub. The hook warns the hub at 40k of growth,
+  earlier than workers.
 - The owner can turn off connectors they don't use (Vercel, flovia, Claude
   Docs, iOS simulator) to shrink every new chat's start. Don't change their
   settings.
@@ -381,8 +396,7 @@ The brief lists every request in `wiki/topics/owner-requests.md` not marked
 done, oldest first, with how long each has waited.
 
 The scheduled task "Chief of Staff morning brief" runs on weekdays and
-writes `H/reports/cos-<date>.md`. It's also the handoff to that day's hub
-chat, so besides Needs you it lists every worker in flight with its
+writes `H/reports/cos-<date>.md`. The one permanent hub chat reads it, so besides Needs you it lists every worker in flight with its
 session id, project, PR and next step, and the open decisions. If `H/wiki`
 exists, it also runs `node H/wiki.mjs lint` and lists stale or broken
 pages in one line. If the owner asks "what did I miss", read the latest

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-09, harness 0a84bb4
+
+- cos: one permanent hub chat (#13)
+- cos: fifth hub handoff 11-09; #50 and #47 workers woken
+- cos: third hub handoff 11-09, owner away, keep full steam
+- cos: handoff update 11-09 (second hub)
+- cos: handoff 11-09, usage push plan
+- Handoff: archive pass, review list, workers in flight
+- Handoff: F1 merged, CRON_SECRET owner step
+- and 31 internal changes
+
 ## 2026-11-08, harness 782a063
 
 - Cut token use: Sonnet workers, no status-only turn ends, hub rules, earlier hub size warning (#12)

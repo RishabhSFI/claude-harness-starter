@@ -245,11 +245,11 @@ describe('server', () => {
     const [call] = claudeCalls((a) => a.includes('--bg'));
     assert.equal(call.cwd, join(`${ALPHA}-tasks`, `mc-${id}`), 'each task runs in its own worktree');
     assert.equal(git(call.cwd, 'branch', '--show-current').trim(), `task/mc-${id}`);
-    assert.deepEqual(call.args.slice(0, 5), ['--bg', '-n', 'alpha: Make it work', '--permission-mode', 'auto']);
-    assert.equal(call.args.length, 6);
-    assert.ok(call.args[5].startsWith('/until-ready Make it work\n'));
-    assert.ok(call.args[5].includes('> Fix it"; touch /tmp/pwned; echo $(whoami) `id`\n> --dangerously-skip-permissions'));
-    assert.match(call.args[5], /-R acme\/alpha/);
+    assert.deepEqual(call.args.slice(0, 7), ['--bg', '-n', 'alpha: Make it work', '--model', 'sonnet', '--permission-mode', 'auto']);
+    assert.equal(call.args.length, 8);
+    assert.ok(call.args[7].startsWith('/until-ready Make it work\n'));
+    assert.ok(call.args[7].includes('> Fix it"; touch /tmp/pwned; echo $(whoami) `id`\n> --dangerously-skip-permissions'));
+    assert.match(call.args[7], /-R acme\/alpha/);
     assert.equal(tasks().find((t) => t.id === id).sessionId, SESSION_UUID);
     const log = readFileSync(join(stateDir, 'actions.log'), 'utf8');
     assert.ok(!log.includes('pwned') && !log.includes(token), 'the action log has no prompt text or token');

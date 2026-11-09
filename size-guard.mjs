@@ -1,5 +1,5 @@
-// Prompt-time size guard: when a chat has grown well past its own starting size, tell it once to write a handoff and
-// continue in a fresh session. Reads only the first and last 1MB of the transcript, so it stays fast.
+// Prompt-time size guard: when a chat has grown well past its own starting size, tell it once to write a handoff (workers continue in
+// a fresh session; the hub keeps going in the same chat). Reads only the first and last 1MB of the transcript, so it stays fast.
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, fstatSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -64,7 +64,7 @@ export const defaultStateDir = () => process.env.COS_SIZE_STATE_DIR || join(home
 export function sizeMessage(tokens, baseline = null, hub = false) {
   const total = `about ${Math.round(tokens / 1000)}k tokens`;
   const grown = baseline === null ? total : `${total}, up ${Math.round((tokens - baseline) / 1000)}k from ${Math.round(baseline / 1000)}k when it started`;
-  if (hub) return `This hub chat's history is ${grown}, and every worker note makes it re-read all of it. Do nothing else now: write the handoff (what is in flight, branches, next step) and tell the owner to start a fresh /cos. Don't start workers or answer status-only notes.`;
+  if (hub) return `This hub chat's history is ${grown}, and every worker note makes it re-read all of it. Write the handoff (what is in flight, branches, next step) to reports/cos-handoff-<date>.md and the wiki, then keep working in this chat. It is the one permanent hub: never start another hub, because each one adds a top-level group to the owner's sidebar. The app compacts this chat on its own.`;
   return `This chat's history is ${grown}, and every reply re-reads all of it. Before doing more, write your state (goal, branch, what's done, next step) to the project's wiki page or a handoff note, tell the owner it is saved, and continue the work in a fresh session with a short brief (start_session if you have it; otherwise ask the owner to open one). Don't start new work in this chat.`;
 }
 
