@@ -22,7 +22,9 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
   size.
 - **Loop until ready.** When the owner asks to build or fix something and
   the project has a gate (`.claude/gate.json`), use `/until-ready`. Don't stop
-  to ask about routine choices; decide and say what you decided.
+  to ask about routine choices; decide and say what you decided. Routine
+  means how to build what was asked, never what to build: open decisions go
+  to the owner as questions.
 - **Build with pstack.** For anything beyond a one-line change, load the
   pstack:poteto-mode skill and follow its playbook: design first, delegated
   build, independent review before the PR.
@@ -64,9 +66,24 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
   in the PR under "Security audit", or write "Security audit: no findings".
   Run the full six-phase audit (the `security-audit` skill, full audit mode)
   only when the owner asks or before a project first goes public.
+- **Asked vs delivered.** Every worker report and PR (code, docs,
+  artifacts, plans, emails) has an "Asked vs delivered" section: the
+  owner's exact words quoted, each thing delivered and which words it
+  answers, "Not asked, suggested" (kept out of the deliverable), "Open
+  questions for the owner", and the scope review's verdict. The shape is in
+  `~/Projects/claude-harness/skills/scope-review/SKILL.md`. Anything the owner
+  didn't ask for is removed or only suggested. Never invent people, roles,
+  headcount, numbers, dates, budgets, process steps or facts. A decision the
+  work depends on (who reports to whom, a budget, a date) goes to the owner
+  as a question, never a guess.
 - **Always review.** Nothing merges without an independent review (a
   pstack review subagent, or a different model) that didn't write the change.
-  The PR says which reviewer ran and what it found. If none ran, run one
+  Docs, artifacts, plans and emails get one too before they reach the owner.
+  Every reviewer, code or not, also runs the scope review
+  (`~/Projects/claude-harness/skills/scope-review/SKILL.md`) against the
+  owner's exact words; it fails on added scope, invented facts, unanswered
+  dependency questions and contradictions. The PR or report says which
+  reviewers ran and what they found. If none ran, run one
   before merging into a project's default or live branch, harness changes
   included. The daily review's own report commit doesn't count as a merge.
 - **Releases.** Merging, pushing and deploying are fine unless the result is

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-10, harness d4979bc
+
+- Scope ledger and scope review: no deliverable reaches the owner with invented scope or open questions (#18)
+- cos: handoff 11-10 early
+
 ## 2026-11-10, harness 2df695a
 
 - Every feature works fully on a phone: standing rule for all projects (#17)

@@ -180,8 +180,16 @@ Hub rules (every worker turn end wakes this chat, so it grows fast):
 
 ### Worker brief
 
-Every build or fix task you send starts with these lines, then the owner's
-words quoted and what done looks like:
+Every task you send (code, docs, artifacts, plans, emails) starts with
+these lines, then the owner's words quoted exactly and what done looks like.
+
+Don't widen the ask. "What done looks like" restates what the owner said;
+it never adds roles, counts, phases, process steps or questions to answer
+("which roles and how many", "how to pick fairly") that the owner didn't
+raise. A gap the owner left open goes in the brief as "ask the owner, don't
+decide": a list of the questions, so the worker brings them back instead of
+filling them in. Ideas of your own go under "Not asked, suggested: offer,
+don't build".
 
 ```
 /until-ready <the goal in the owner's words>
@@ -204,6 +212,15 @@ Before the PR, run `node <H>/gate/security-audit.mjs` (skip it if the gate
 has the step), fix confirmed high or critical findings, and list the rest in
 the PR under "Security audit".
 
+Scope: build only what the owner's words above ask for, and follow
+<H>/skills/scope-review/SKILL.md for docs, artifacts, plans and emails as
+well as code: its "Asked vs delivered" section in your report and PR body,
+no invented facts, open decisions as questions, and an independent scope
+review of the deliverable itself (Opus for plans, hiring, money and
+people) beside the code review, repeated until it passes. Then run
+`node <H>/scope-check.mjs --pr <origin owner/repo>#<n>` (or `--file
+<report>` when there is no PR) and fix what it names.
+
 Keep this chat small: delegate building and long reads. End your turn only
 when the PR is open, you're blocked, or you have a question for the owner or
 hub; every turn end wakes the hub, which re-reads its whole chat. While
@@ -224,8 +241,10 @@ need the owner's review: open a PR and stop there, with a preview deploy
 link if the project has one. Anything else (task branches, private
 branches, preview deploys) you may do.
 
-Report back in this shape: outcome first, PR link, preview link, what the
-checks and the review found, decisions you made, anything left.
+Report back in this shape: outcome first, open questions for the owner,
+PR link, preview link, the "Asked vs delivered" section, what the checks,
+the code review and the scope review found, decisions you made, anything
+left.
 ```
 
 When the work is on the harness itself and `git config harness.starterRepo`
@@ -293,7 +312,32 @@ that branch is public, which makes it a go-live step. Labels like
 
 A worker's note is its claim, not proof. Check the real thing before
 reporting: `gh pr view <n> --json state,baseRefName,statusCheckRollup,url`,
-`git -C <checkout> log`, or rerun `node H/cos.mjs status`. Then:
+`git -C <checkout> log`, or rerun `node H/cos.mjs status`.
+
+Scope check, before you tell the owner anything is done (code, doc,
+artifact, plan, email):
+
+1. Run `node H/scope-check.mjs --pr <owner/repo>#<n>`, or save the
+   worker's report to a file in your scratchpad and run it with `--file`. It
+   fails when the "Asked vs delivered" section or a passing scope review is
+   missing.
+2. Read the section against the owner's words in this chat, not the brief's
+   summary. Open the deliverable itself (the Artifact tool's read for an
+   artifact, the doc, the PR diff), never only the worker's summary of it,
+   and check that it holds nothing the section doesn't list.
+3. Reject the work if the check fails, the section is missing, any delivered
+   item answers nothing the owner said, or the deliverable has more than the
+   section lists. Send it back to the worker (`SendMessage`) with what to
+   remove or ask, and tell the owner nothing about it as done.
+4. When it passes, lead with its open questions: ask the owner them before
+   calling the work done. A deliverable that depends on an unanswered
+   question is not done.
+
+`node H/cos.mjs status` lists a worker PR (one signed "Generated with
+Claude Code") whose body fails the check as blocked, never under "Chief of
+Staff can merge". Your own PRs and bot PRs are exempt. Worker PRs opened
+before the rule show "(needs scope section)" instead: send each back to its
+worker to add the section before you batch it. Then:
 
 - PR listed under "Chief of Staff can merge": add it to the next "Ready to
   merge" batch (see Merges).

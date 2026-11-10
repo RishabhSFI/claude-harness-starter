@@ -43,9 +43,14 @@ yet" first.
 ## 3. Work
 
 Don't ask the owner anything routine. Decide, note the decision for the
-report, and keep going. The gate checks code, not looks: when the work
-changes what people see, look at it in the browser pane at 1440px and 375px
-before ending a turn. Commit as you go on the task branch.
+report, and keep going. Routine means how to build what was asked, never
+what to build: don't add people, roles, counts, features, process steps or
+facts the owner didn't ask for, and don't guess a decision the work depends
+on (who reports to whom, a budget, a date). Those go to the owner as open
+questions in the report, with a marked blank in the work.
+
+The gate checks code, not looks: when the work changes what people see,
+look at it in the browser pane at 1440px and 375px before ending a turn. Commit as you go on the task branch.
 
 ## 4. End your turn
 
@@ -58,10 +63,15 @@ The Stop hook runs the project's checks. It can take a few minutes.
 - **It fails:** you get the output. Fix the cause, never the check: don't edit
   the check scripts or tests, skip a test or loosen a pass rule to get
   through. End your turn again.
-- **It passes:** commit, then `git push -u origin task/<slug>` and
-  `gh pr create --base <base> --fill-first` with a body: the goal, what
-  changed, decisions you made, the QA lines the hook gave you. Then report
-  with the PR link.
+- **It passes:** get an independent scope review of the work (the
+  `scope-review` skill, `~/Projects/claude-harness/skills/scope-review/SKILL.md`)
+  beside the code review, and fix what it finds until it passes. Commit,
+  then `git push -u origin task/<slug>` and `gh pr create --base <base>
+  --fill-first` with a body: the goal, the "Asked vs delivered" section in
+  that skill's shape, what changed, decisions you made, the QA lines the
+  hook gave you. Run `node ~/Projects/claude-harness/scope-check.mjs
+  --pr <origin owner/repo>#<n>` and fix the body until it passes. Then
+  report with the PR link and the open questions first.
 - **Last try fails:** stop. Report what still fails and what you tried. Push
   the branch and open a draft PR (`--draft`) so the work isn't lost.
 

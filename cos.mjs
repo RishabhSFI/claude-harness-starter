@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_DESKTOP_DIR, DEFAULT_PROJECTS_DIR, findPaused, markResumed } from './limits.mjs';
 import { USER_FILES } from './starter-update.mjs';
 import { uptimeWarningOn } from './uptime.mjs';
+import { scopeStatus } from './scope-check.mjs';
 import { sizeWarning } from './size-guard.mjs';
 import { baseRefOf, hasOpenWork, inspectWorktree, linkedWorktrees, removeWorktree, staleReason } from './worktrees.mjs';
 import { attachSecretsToStatus, parseSecrets, resolveSecrets, renderSecrets, secretsJson, writeSecretsPage } from './secrets.mjs';
@@ -187,7 +188,7 @@ export function githubRepoOf(url) {
 }
 
 function listPullRequests(cwd, repo, fakePrsFile) {
-  const fields = 'number,title,headRefName,baseRefName,isDraft,url,statusCheckRollup,mergeable,reviewDecision,updatedAt,labels';
+  const fields = 'number,title,headRefName,baseRefName,isDraft,url,statusCheckRollup,mergeable,reviewDecision,updatedAt,labels,body,author,createdAt';
   const r = fakePrsFile
     ? { ok: true, out: readFileSync(fakePrsFile, 'utf8') }
     : run(GH, ['pr', 'list', '-R', repo, '--json', fields, '--limit', '20'], cwd, GH_TIMEOUT_MS);
@@ -203,6 +204,7 @@ function listPullRequests(cwd, repo, fakePrsFile) {
       checks: (pr.statusCheckRollup ?? []).map((c) => String(c.conclusion || c.state || '').toUpperCase()),
       mergeable: pr.mergeable ?? null,
       reviewDecision: pr.reviewDecision ?? null,
+      ...scopeStatus(pr),
       updatedAt: pr.updatedAt ?? null,
       labels: (pr.labels ?? []).map((l) => ({ name: String(l?.name ?? '') })),
       failingChecks: (pr.statusCheckRollup ?? [])
@@ -244,8 +246,8 @@ function listMergedPullRequests(cwd, repo, { fakePrs, fakeMerged }) {
 }
 
 /**
- * First matching rule wins; no match means mergeable-by-cos. Every unknown fails closed. Draft, conflicts and requested
- * changes sit above the public-branch rule so a live PR with any of them is blocked, not merely "review": the owner
+ * First matching rule wins; no match means mergeable-by-cos. Every unknown fails closed. Draft, conflicts, requested
+ * changes and a missing scope section (scope-check.mjs) sit above the public-branch rule so a live PR with any of them is blocked, not merely "review": the owner
  * can confirm past failing checks on a live PR, never past these. `why` is the plain-words reason shown to the owner.
  */
 const PR_RULES = [
@@ -253,6 +255,11 @@ const PR_RULES = [
   { to: 'blocked', why: "It's still a draft.", when: (pr) => pr.isDraft },
   { to: 'blocked', why: 'It has merge conflicts with its base branch.', when: (pr) => pr.mergeable === 'CONFLICTING' },
   { to: 'blocked', why: 'A reviewer asked for changes.', when: (pr) => pr.reviewDecision === 'CHANGES_REQUESTED' },
+  {
+    to: 'blocked',
+    why: 'Its "Asked vs delivered" section or passing scope review is missing, so nothing shows it does only what you asked.',
+    when: (pr) => pr.scopeProblems?.length > 0,
+  },
   { to: 'review', why: 'It lands in a public branch, so you look first.', when: (pr, publicBranches) => publicBranches.includes(pr.base) },
   { to: 'blocked', why: 'It has no checks, so nothing shows it works.', when: (pr) => !pr.checks?.length },
   { to: 'blocked', why: "Its checks aren't all green.", when: (pr) => !pr.checks.every((c) => SUCCESS_CHECK.has(c)) },
@@ -265,7 +272,7 @@ const matchRule = (pr, surface, defaultBranch) => {
 
 /**
  * review: lands in a public branch (or has no base), so the owner looks first.
- * blocked: draft, conflicts or requested changes (even on a public branch), else no checks or any check not green.
+ * blocked: draft, conflicts, requested changes or a failing scope section (even on a public branch), else no checks or any check not green.
  * @param {{base: string | null, isDraft: boolean, checks: string[], mergeable?: string | null, reviewDecision?: string | null}} pr
  * @param {PublicSurface | null} surface
  * @returns {'review' | 'blocked' | 'mergeable-by-cos'}
@@ -432,7 +439,7 @@ function describeCheckout(c, { full = false } = {}) {
     }
   }
   if (c.prs.length) {
-    parts.push(`PRs: ${c.prs.map((pr) => `#${pr.number} ${pr.title}${pr.failingChecks.length ? ' (failing)' : ''}${pr.isDraft ? ' (draft)' : ''}`).join('; ')}`);
+    parts.push(`PRs: ${c.prs.map((pr) => `#${pr.number} ${pr.title}${pr.failingChecks.length ? ' (failing)' : ''}${pr.isDraft ? ' (draft)' : ''}${pr.scopeNeeded ? ' (needs scope section)' : ''}`).join('; ')}`);
   }
   return parts.join('; ');
 }
@@ -459,7 +466,7 @@ function prSection(report, classification, heading) {
     p.checkouts.flatMap((c) =>
       (c.prs ?? [])
         .filter((pr) => pr.classification === classification && !seen.has(pr.url) && seen.add(pr.url))
-        .map((pr) => `- **${p.name}** #${pr.number} ${pr.title} (${pr.url})`),
+        .map((pr) => `- **${p.name}** #${pr.number} ${pr.title} (${pr.url})${pr.scopeNeeded ? ' (needs scope section)' : ''}`),
     ),
   );
   return items.length ? [heading, '', ...items, ''] : [];
