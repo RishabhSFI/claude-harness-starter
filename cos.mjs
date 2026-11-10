@@ -1125,8 +1125,8 @@ function main() {
     return;
   }
 
-  if (command === 'publish-starter' || command === 'update') {
-    const file = command === 'update' ? 'starter-update.mjs' : 'make-starter.mjs';
+  if (command === 'publish-starter' || command === 'publish-codex-starter' || command === 'update') {
+    const file = { update: 'starter-update.mjs', 'publish-starter': 'make-starter.mjs', 'publish-codex-starter': 'make-codex-starter.mjs' }[command];
     runStarterCommand(file, command, { flags, positional, harness: SELF_DIR }).catch((e) => refuse(e.message, 1));
     return;
   }
@@ -1168,7 +1168,7 @@ function main() {
 
   const commands = { status: cmdStatus, worktrees: cmdWorktrees, route: cmdRoute, secrets: cmdSecrets, paused: cmdPaused, ff: cmdFf };
   if (!commands[command]) {
-    console.error('usage: cos.mjs status [--json] [--no-gh] [--cached-secrets] [--full] | worktrees [--json] [--remove] | usage [--hours 48] [--growth 80000 | --cap <tokens>] [--projects-dir <dir>] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | retire <id> | route "<text>" [--json] | ff <folder> <sync-branch> <target-branch> [--json] | learned | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | mc [--port 4747] | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run]   (--registry <path>)');
+    console.error('usage: cos.mjs status [--json] [--no-gh] [--cached-secrets] [--full] | worktrees [--json] [--remove] | usage [--hours 48] [--growth 80000 | --cap <tokens>] [--projects-dir <dir>] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | retire <id> | route "<text>" [--json] | ff <folder> <sync-branch> <target-branch> [--json] | learned | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | mc [--port 4747] | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run] | publish-codex-starter [--to <url>] [--dry-run]   (--registry <path>)');
     process.exitCode = 2;
     return;
   }

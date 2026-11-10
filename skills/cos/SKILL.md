@@ -195,6 +195,11 @@ Don't stop to ask about routine choices; decide and list your decisions in
 the report. If the project has no .claude/gate.json, draft one from its
 real checks and commit it with the work.
 
+Every screen and feature must work fully on a phone (375px and 390px: phone
+navigation, 44px tap targets, no hover-only controls, tables as cards, sheets
+that fit, no sideways scroll). A UI PR carries phone screenshots, and the
+changed flows are walked end to end at phone size.
+
 Before the PR, run `node <H>/gate/security-audit.mjs` (skip it if the gate
 has the step), fix confirmed high or critical findings, and list the rest in
 the PR under "Security audit".

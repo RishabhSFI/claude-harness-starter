@@ -49,6 +49,10 @@ before ending a turn. Commit as you go on the task branch.
 
 ## 4. End your turn
 
+For a UI change, first check it at 375px and 390px wide: walk the changed
+flows end to end, take phone screenshots for the PR, and fix sideways scroll,
+tap targets under 44px and hover-only controls.
+
 The Stop hook runs the project's checks. It can take a few minutes.
 
 - **It fails:** you get the output. Fix the cause, never the check: don't edit
@@ -82,7 +86,8 @@ project, so the owner approves it once:
      a command that serves the build on `{port}` and one that checks `{url}`.
    - `local`: untracked files a worktree needs (`.env.local`, data folders).
    - `rules`: the project's hard rules from CLAUDE.md (files not to touch,
-     what never to run, what "done" also needs).
+     what never to run, what "done" also needs). For a web app, add the
+     phone rule: QA also checks pages at 375px and 390px wide.
    - `tries`: 5.
 3. Show the owner the draft in one short message and ask for an OK. This is
    the one question worth asking: the gate decides when work counts as done.
