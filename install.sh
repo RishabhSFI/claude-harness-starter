@@ -57,6 +57,12 @@ link "$HARNESS/skills/wiki" "$CLAUDE_DIR/skills/wiki" refuse
 link "$HARNESS/skills/until-ready" "$CLAUDE_DIR/skills/until-ready" refuse
 link "$HARNESS/skills/security-audit" "$CLAUDE_DIR/skills/security-audit" refuse
 link "$HARNESS/skills/scope-review" "$CLAUDE_DIR/skills/scope-review" refuse
+# Vendored emilkowalski/skills (MIT): one link per skill folder.
+for d in "$HARNESS"/skills/vendor/emilkowalski/*/; do
+  [ -f "${d}SKILL.md" ] || continue
+  n=$(basename "$d")
+  link "$HARNESS/skills/vendor/emilkowalski/$n" "$CLAUDE_DIR/skills/$n" refuse
+done
 link "$HARNESS/agents/history-reader.md" "$CLAUDE_DIR/agents/history-reader.md" refuse
 link "$HARNESS/global/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" warn
 link "$HARNESS/global/pstack-models.md" "$CLAUDE_DIR/pstack-models.md" warn

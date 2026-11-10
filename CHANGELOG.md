@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-10, harness 49c8d37
+
+- Vendor emilkowalski UI/motion skills (MIT) (#26)
+- cos: handoff for new hub 2026-11-10
+- wiki: recent.design as standing design reference
+
 ## 2026-11-10, harness e031d5e
 
 - cos: handoff 09:50
