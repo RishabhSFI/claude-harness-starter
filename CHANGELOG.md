@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-10, harness e031d5e
+
+- cos: handoff 09:50
+- Harness optimize: pr-check, stop rule, configurable cap and worker model, shorter always-loaded text (#25)
+- cos: handoff 09:30
+- cos: handoff 09:10
+- cos: handoff 08:45
+- Harness review 2026-11-10
+- cos: remove cleanos (owner does not want it)
+- cos: handoff 03:20
+- cos: add cleanos project
+- cos: handoff overnight sprint
+- cos: handoff 11-10 later
+- cos: handoff 11-10 03:00
+- cos: handoff 11-10 midday
+- Trucking growth report: offers, CAC model, Meta ads, Owen's video loop, 30-day plan (#20)
+- cos: handoff 11-10 late night
+- cos: handoff 11-10 morning
+- and 6 internal changes
+
 ## 2026-11-10, harness d4979bc
 
 - Scope ledger and scope review: no deliverable reaches the owner with invented scope or open questions (#18)

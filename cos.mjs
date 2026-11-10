@@ -8,6 +8,7 @@ import { DEFAULT_DESKTOP_DIR, DEFAULT_PROJECTS_DIR, findPaused, markResumed } fr
 import { USER_FILES } from './starter-update.mjs';
 import { uptimeWarningOn } from './uptime.mjs';
 import { scopeStatus } from './scope-check.mjs';
+import { runTool } from './cos-tools.mjs';
 import { sizeWarning } from './size-guard.mjs';
 import { baseRefOf, hasOpenWork, inspectWorktree, linkedWorktrees, removeWorktree, staleReason } from './worktrees.mjs';
 import { attachSecretsToStatus, parseSecrets, resolveSecrets, renderSecrets, secretsJson, writeSecretsPage } from './secrets.mjs';
@@ -1110,6 +1111,11 @@ function cmdHook(projects, flags) {
 
 function main() {
   const [command, ...rest] = process.argv.slice(2);
+  const toolCode = runTool(command, rest);
+  if (toolCode !== null) {
+    process.exitCode = toolCode;
+    return;
+  }
   let parsed;
   try {
     parsed = parseArgs(rest);
@@ -1175,7 +1181,7 @@ function main() {
 
   const commands = { status: cmdStatus, worktrees: cmdWorktrees, route: cmdRoute, secrets: cmdSecrets, paused: cmdPaused, ff: cmdFf };
   if (!commands[command]) {
-    console.error('usage: cos.mjs status [--json] [--no-gh] [--cached-secrets] [--full] | worktrees [--json] [--remove] | usage [--hours 48] [--growth 80000 | --cap <tokens>] [--projects-dir <dir>] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | retire <id> | route "<text>" [--json] | ff <folder> <sync-branch> <target-branch> [--json] | learned | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | mc [--port 4747] | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run] | publish-codex-starter [--to <url>] [--dry-run]   (--registry <path>)');
+    console.error('usage: cos.mjs status [--json] [--no-gh] [--cached-secrets] [--full] | worktrees [--json] [--remove] | usage [--hours 48] [--growth 80000 | --cap <tokens>] [--projects-dir <dir>] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | retire <id> | route "<text>" [--json] | ff <folder> <sync-branch> <target-branch> [--json] | pr-check <owner/repo#N | N> [-R repo] | stop-rule --all <pct> --fable <pct> [--five-hour <pct>] [--now <ISO time>] [--workers N] | rate --start-all A --start-fable B --now-all C --now-fable D --worker-hours H | cap --working N [--want W] | worker-model <role> | learned | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | mc [--port 4747] | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run] | publish-codex-starter [--to <url>] [--dry-run]   (--registry <path>)');
     process.exitCode = 2;
     return;
   }

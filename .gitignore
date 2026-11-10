@@ -3,6 +3,7 @@ __pycache__/
 .claude/loop/
 .claude/security-audit/
 .claude/secrets-cache.json
+cos.config.json
 
 # Your files. The starter never ships them; they are yours to keep. Track them in
 # your own private repo with `git add -f <file>` once, or leave them local.

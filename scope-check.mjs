@@ -45,7 +45,7 @@ function unfenced(text) {
 }
 
 /** The lines of the "Asked vs delivered" section, up to the next heading of the same or a higher level. */
-function section(text) {
+export function section(text) {
   const lines = unfenced(text).split('\n');
   const at = lines.findIndex((l) => HEADING.test(l.trim()));
   if (at < 0) return null;

@@ -3,14 +3,13 @@
 Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
 `~/.claude/CLAUDE.md` by `install.sh`. Project CLAUDE.md files add to these.
 
-- **Right folder first.** If the request is about one of the projects in
+- **Right folder first.** If the request is about a project in
   `~/Projects/claude-harness/projects.json` and this session is in another
   folder, say so in the first reply and offer to switch (change_directory)
-  before doing any work.
-- **New sites and apps get a real folder.** If the request is to build a
-  website or app and this session has no project folder, make
-  `~/Projects/<name>` first (with `git init`) and switch to it before writing
-  code. Dev servers and previews don't run in scratch sessions.
+  before any work.
+- **New sites and apps get a real folder.** For a website or app with no
+  project folder, make `~/Projects/<name>` (with `git init`) and switch to it
+  before writing code. Dev servers and previews don't run in scratch sessions.
 - **Done for UI or wording changes**, in any project: run the unslop skill on
   the changed screens and a pstack review of the diff, then say what each one
   changed.
@@ -34,28 +33,21 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
     to a fresh session with a short brief, and the project's wiki page
     carries the history.
   - Once a chat has grown ~80k tokens past its own starting size (the prompt
-    hook warns), write your state
-    (goal, branch, done, next step) to the project's wiki page or the notes
-    folder, then keep working in the same chat; the app compacts it. Never end
-    a turn or stop work because of the warning. The Chief of Staff hub is the
-    same, with its hook warning at 40k of growth: it writes the handoff
-    (`reports/cos-handoff-<date>.md`) and keeps working in the same chat; it
-    never starts another hub, since each one adds a top-level sidebar group.
-    Workers it starts are filed in the "Chief of Staff" sidebar group, and it
-    archives each one once its PR is merged (or done and waiting only on the
-    owner).
+    hook warns), write your state (goal, branch, done, next step) to the
+    project's wiki page or the notes folder, then keep working in the same chat;
+    the app compacts it. Never end a turn or stop work because of the warning.
+    The Chief of Staff hub has its own, stricter rules in the cos skill.
   - Keep the main chat small: hand building, long reads and big outputs to
     subagents, and summarize what comes back.
-  - Chat history goes through the `history-reader` subagent (Haiku):
-    reading or searching other sessions' transcripts, cloud run events,
-    `~/.claude/projects` files and big saved tool-result files. Never read
-    them in the main chat. The one exception is a status peek of 4 events or
-    fewer on one session.
+  - Chat history goes through the `history-reader` subagent (Haiku): other
+    sessions' transcripts, cloud run events, `~/.claude/projects` files and
+    big saved tool-result files, never the main chat. Exception: a status
+    peek of 4 events or fewer on one session.
   - A worker ends its turn only when its PR is ready, it's blocked, or it has
     a question for the owner or hub. Every turn end wakes the hub, which
     re-reads its whole chat. While helpers run, wait in the foreground
     (blocking Agent calls, Monitor until-loops); never end a turn with a
-    status-only message.
+    status-only message. The hub answers a status-only note with nothing.
   - Size reviews: a Sonnet reviewer for small, low-risk diffs (under about
     150 lines, no auth, money, data deletion or merge logic); an Opus
     reviewer for large or risky ones.
@@ -66,25 +58,22 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
   in the PR under "Security audit", or write "Security audit: no findings".
   Run the full six-phase audit (the `security-audit` skill, full audit mode)
   only when the owner asks or before a project first goes public.
-- **Asked vs delivered.** Every worker report and PR (code, docs,
-  artifacts, plans, emails) has an "Asked vs delivered" section: the
-  owner's exact words quoted, each thing delivered and which words it
-  answers, "Not asked, suggested" (kept out of the deliverable), "Open
-  questions for the owner", and the scope review's verdict. The shape is in
+- **Asked vs delivered.** Every worker report and PR (code, docs, artifacts,
+  plans, emails) has an "Asked vs delivered" section in the shape of
   `~/Projects/claude-harness/skills/scope-review/SKILL.md`. Anything the owner
   didn't ask for is removed or only suggested. Never invent people, roles,
   headcount, numbers, dates, budgets, process steps or facts. A decision the
-  work depends on (who reports to whom, a budget, a date) goes to the owner
-  as a question, never a guess.
-- **Always review.** Nothing merges without an independent review (a
-  pstack review subagent, or a different model) that didn't write the change.
-  Docs, artifacts, plans and emails get one too before they reach the owner.
-  Every reviewer, code or not, also runs the scope review
-  (`~/Projects/claude-harness/skills/scope-review/SKILL.md`) against the
-  owner's exact words; it fails on added scope, invented facts, unanswered
-  dependency questions and contradictions. The PR or report says which
-  reviewers ran and what they found. If none ran, run one
-  before merging into a project's default or live branch, harness changes
+  work depends on (who reports to whom, a budget, a date) goes
+  to the owner as a question, never a guess.
+- **Always review.** Nothing merges without an independent review (a pstack
+  review subagent, or a different model) that didn't write the change, and
+  every required check COMPLETED and successful (`node cos.mjs pr-check`
+  reads it; neutral or skipped count as in `status`, but one real success is
+  needed, and in-progress is not a pass). Docs, artifacts, plans and emails get
+  a review too before they reach the owner. Every reviewer, code or not, also
+  runs the scope review (the skill above) against the owner's exact words. The
+  PR or report says which reviewers ran and what they found. If none ran, run
+  one before merging into a project's default or live branch, harness changes
   included. The daily review's own report commit doesn't count as a merge.
 - **Releases.** Merging, pushing and deploying are fine unless the result is
   publicly visible. Public means what the project's CLAUDE.md or the
@@ -103,7 +92,8 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
 - **GitHub: your own repo only.** Pass `-R <owner/repo of origin>` to every
   `gh pr` and `gh repo` command, and push only to `origin`. Some folders also
   have an `upstream` remote that is someone else's public repo; never push,
-  open a PR or comment there.
+  open a PR or comment there. Before a scripted commit or push (a loop, a
+  shell script), check `git remote get-url origin` is the repo you mean.
 - **All my projects at once** ("status of everything", "tell <project> to
   ...", "start a new project"): that's the Chief of Staff. Use `/cos`.
 
