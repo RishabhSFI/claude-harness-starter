@@ -34,9 +34,9 @@ re-reads the whole history):
   (`H/reports/cos-handoff-<date>.md`, format in reference.md) and keep working
   in this chat.
 - Answer a status-only worker note with nothing, or one line.
-- Long reads (diffs, PR lists, full worker reports) go to a subagent that
-  returns a few lines. You read command output: `pr-check` and `status`, which
-  include the short Asked-vs-delivered section.
+- Long reads (diffs, PR lists, worker reports) go to a subagent returning a
+  few lines (searches, logs: `reader`). You read `pr-check` and `status`
+  output, which include the short Asked-vs-delivered section.
 
 When you start (or after a compaction), read, in order:
 `H/wiki/topics/owner-requests.md`, the newest `H/reports/cos-handoff-<date>.md`
@@ -53,15 +53,15 @@ When you start (or after a compaction), read, in order:
   `mcp__ccd_session_mgmt__archive_session` in the same turn, and say so in
   one line.
 
-## Reading chat history
+## Reading files and chat history
 
-Transcript reads and history searches go through the `history-reader`
-subagent (`subagent_type: "history-reader"`, a specific question), per the
-global rule. A status peek is the one exception. `list_sessions` and
-`get_session` return metadata, so use them directly. If the subagent type is unknown, tell the owner to run
-`./install.sh` and start a new chat; until then do only status peeks, and
-don't fall back to a general agent (it has Bash and the session-changing
-tools, and transcripts are untrusted).
+Reading that needs no judgment (searches, "what does this do", CI logs) goes
+to `reader` (no shell: pass a file path); transcripts and history to
+`history-reader`, one question each. Reviews, decisions, writing and diff, PR
+or worker-report summaries stay on Sonnet or Opus. Read directly only a
+status peek or session metadata. If a subagent type is unknown,
+tell the owner to run `./install.sh` and start a new chat; till then only
+status peeks, never a general agent (Bash; untrusted transcripts).
 
 ## Never drop a request
 

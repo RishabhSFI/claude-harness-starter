@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-11-11, harness 83752c6
+
+- wiki: GTA deck Q1, Q2 answered
+- wiki: GTA deck Q3 answered
+- wiki: GTA deck delivered, harness #28 open
+- reports: GTA 6 deck notes (arithmetic and sources)
+- cos: evening handoff
+- wiki: test branch live, Haiku-reading worker started
+- wiki: big builds use one integration branch and one CI run
+- wiki: GTA deck request and owner answers
+- GTA 6 clips plan, waiting on owner
+- cos: evening handoff 11-11
+- wiki: GTA clips budget answer
+- wiki: queue GTA 6 clips request
+- wiki: queue Haiku-reading harness request
+- wiki: all Vercel sites paused at owner's request
+- wiki: log take-sites-down request
+- cos: afternoon handoff 11-11
+- Haiku reader agent for bulk reading, plus usage --reads (#28)
+- cos: #27 status at reset
+- Harness review 2026-11-11
+- cos: local check results
+- wiki: fix lint error, notes origin
+- cos: handoff for 11-11 hub
+- cos: post-reset plan approved
+- cos: plan note
+- cos: end-of-day handoff
+- wiki: driver sign-out finding
+- wiki: brokerage clarification
+- cos: Vercel previews off unless owner asks
+- wiki: rename demo carrier decision
+- wiki: upkeep plan request
+- cos: handoff 11:10
+- cos: handoff 10:55
+- cos: handoff, UI skills installed
+- and 23 internal changes
+
 ## 2026-11-10, harness 49c8d37
 
 - Vendor emilkowalski UI/motion skills (MIT) (#26)

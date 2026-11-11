@@ -1,5 +1,5 @@
 #!/bin/sh
-# Links the cos, wiki, until-ready, security-audit and scope-review skills, the history-reader agent and global CLAUDE.md into ~/.claude and
+# Links the cos, wiki, until-ready, security-audit and scope-review skills, the history-reader and reader agents and global CLAUDE.md into ~/.claude and
 # registers the hooks: the wrong-folder and chat-size warning (UserPromptSubmit) and the
 # until-ready gate (Stop), and sets CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000 in settings.json env when unset. Safe to rerun. Pass --dry-run to only print actions.
 set -eu
@@ -64,6 +64,7 @@ for d in "$HARNESS"/skills/vendor/emilkowalski/*/; do
   link "$HARNESS/skills/vendor/emilkowalski/$n" "$CLAUDE_DIR/skills/$n" refuse
 done
 link "$HARNESS/agents/history-reader.md" "$CLAUDE_DIR/agents/history-reader.md" refuse
+link "$HARNESS/agents/reader.md" "$CLAUDE_DIR/agents/reader.md" refuse
 link "$HARNESS/global/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" warn
 link "$HARNESS/global/pstack-models.md" "$CLAUDE_DIR/pstack-models.md" warn
 

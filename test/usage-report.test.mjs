@@ -7,7 +7,7 @@ import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = realpathSync(join(fileURLToPath(import.meta.url), '..', '..'));
-const { collect, capped, summarize, weigh, labelFolder, baselines, historyOf } = await import(join(ROOT, 'usage-report.mjs'));
+const { collect, capped, summarize, weigh, labelFolder, baselines, historyOf, readKind, readsReport } = await import(join(ROOT, 'usage-report.mjs'));
 
 const NOW = Date.parse('2026-11-07T12:00:00Z');
 const line = (id, at, usage, extra = {}) =>
@@ -81,5 +81,39 @@ describe('usage report', () => {
     const r = spawnSync('node', [join(ROOT, 'cos.mjs'), 'usage', '--projects-dir', dir, '--hours', '100000'], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /Usage, last 100000h/);
+  });
+
+  test('tool output is sorted into reads a reader could take and everything else', () => {
+    assert.equal(readKind('Bash', { command: 'cd /x && git diff main' }), 'Bash (read-like)');
+    assert.equal(readKind('Bash', { command: 'sed -n 1,40p a.js' }), 'Bash (read-like)');
+    assert.equal(readKind('Bash', { command: 'node --test' }), 'Bash (other)');
+    assert.equal(readKind('Read', { file_path: '/a/b.md' }), 'Read (text)');
+    assert.equal(readKind('Read', { file_path: '/a/b.PNG' }), 'Read (image, stays)');
+    assert.equal(readKind('Grep', {}), 'other tools');
+    assert.equal(readKind('Bash', { command: 'git -C /x diff' }), 'Bash (read-like)');
+    assert.equal(readKind('Bash', { command: 'cat a > b' }), 'Bash (other)');
+    assert.equal(readKind('Bash', { command: 'sed -i s/a/b/ f' }), 'Bash (other)');
+    assert.equal(readKind('Bash', { command: 'find . -delete' }), 'Bash (other)');
+  });
+
+  test('the reads report counts results by who ran them and never prints transcript text', () => {
+    const d = realpathSync(mkdtempSync(join(tmpdir(), 'reads-')));
+    try {
+      const folder = join(d, '-Users-someone-Projects-beta');
+      mkdirSync(folder, { recursive: true });
+      const at = '2026-11-07T10:00:00Z';
+      const use = (id, name, input) => JSON.stringify({ type: 'assistant', timestamp: at, message: { id: `m${id}`, content: [{ type: 'tool_use', id, name, input }] } });
+      const res = (id, text) => JSON.stringify({ type: 'user', timestamp: at, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+      writeFileSync(join(folder, 'chat1.jsonl'), [use('t1', 'Bash', { command: 'cat big.txt' }), res('t1', 'SECRET '.repeat(2000)), use('t2', 'Bash', { command: 'npm test' }), res('t2', 'ok')].join('\n'));
+      const out = readsReport(d, { hours: 48, now: NOW });
+      assert.match(out, /\| main chat \| Bash \(read-like\) \| 1 \|/);
+      assert.match(out, /\| main chat \| Bash \(other\) \| 1 \|/);
+      mkdirSync(join(folder, 'chat1', 'subagents'), { recursive: true });
+      writeFileSync(join(folder, 'chat1', 'subagents', 'a.jsonl'), [use('t3', 'Read', { file_path: '/x/y.md' }), res('t3', 'text')].join('\n'));
+      const out2 = readsReport(d, { hours: 48, now: NOW });
+      assert.match(out2, /\| subagent \| Read \(text\) \| 1 \|/);
+      assert.match(out, /Haiku reader could take/);
+      assert.doesNotMatch(out, /SECRET/);
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });

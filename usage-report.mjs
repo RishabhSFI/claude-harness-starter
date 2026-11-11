@@ -124,11 +124,78 @@ export function summarize(records, { cap = null, growth = 80_000, hours = 48 } =
   return lines.join('\n');
 }
 
+const READ_LIKE = /^(cat|sed|head|tail|awk|grep|rg|find|ls|tree|wc|git (-C \S+ )?(diff|log|show|status)|gh (pr (diff|view)|run view))\b/;
+const WRITES = /(^|[^<>=-])>(?!&)|\bsed -i|\s-(delete|exec)\b|\|\s*(sh|bash)\b|--output/;
+const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
+
+/** Which kind of tool output a result is: a read a Haiku reader could take, or something else. */
+export function readKind(tool, input) {
+  if (tool === 'Read') return IMAGE.test(String(input?.file_path ?? '')) ? 'Read (image, stays)' : 'Read (text)';
+  if (tool === 'Bash') {
+    const cmd = String(input?.command ?? '').trim().replace(/^(cd [^;&|]+(&&|;)\s*)+/, '');
+    return READ_LIKE.test(cmd) && !WRITES.test(cmd) ? 'Bash (read-like)' : 'Bash (other)';
+  }
+  return 'other tools';
+}
+
+/**
+ * Where tool output goes. Each result costs its tokens once to write, then a tenth of that on every later reply in
+ * its chat. Tokens are estimated as characters / 4 (an image counts 1500), so read the shares, not the totals.
+ * Text of a transcript is never printed.
+ */
+export function readsReport(dir, { hours = 48, now = Date.now() } = {}) {
+  const since = now - hours * 3_600_000;
+  const rows = new Map();
+  let total = 0;
+  for (const t of listTranscripts(dir)) {
+    try { if (statSync(t.path).mtimeMs < since) continue; } catch { continue; }
+    const uses = new Map();
+    const seen = new Set();
+    const results = [];
+    let replies = 0;
+    for (const line of readFileSync(t.path, 'utf8').split('\n')) {
+      if (!line.includes('"assistant"') && !line.includes('"tool_result"')) continue;
+      let e;
+      try { e = JSON.parse(line); } catch { continue; }
+      if (!(Date.parse(e.timestamp) >= since) || !Array.isArray(e.message?.content)) continue;
+      if (e.type === 'assistant') {
+        if (!seen.has(e.message.id ?? e.requestId)) { seen.add(e.message.id ?? e.requestId); replies++; }
+        for (const b of e.message.content) if (b.type === 'tool_use') uses.set(b.id, b);
+      } else if (e.type === 'user') {
+        for (const b of e.message.content) {
+          if (b.type !== 'tool_result') continue;
+          const use = uses.get(b.tool_use_id);
+          if (!use) continue;
+          const parts = Array.isArray(b.content) ? b.content : [{ type: 'text', text: String(b.content ?? '') }];
+          const tok = parts.reduce((a, p) => a + (p.type === 'image' ? 1500 : String(p.text ?? '').length / 4), 0);
+          results.push({ kind: readKind(use.name, use.input), tok, after: replies });
+        }
+      }
+    }
+    for (const r of results) {
+      const w = r.tok * WEIGHTS.write + r.tok * WEIGHTS.read * Math.max(0, replies - r.after);
+      const key = `${t.sub ? 'subagent' : 'main chat'} | ${r.kind}`;
+      const row = rows.get(key) ?? { n: 0, tok: 0, w: 0 };
+      row.n++; row.tok += r.tok; row.w += w; total += w;
+      rows.set(key, row);
+    }
+  }
+  const lines = [`Tool output, last ${hours}h (estimated; read the shares):`, '', '| Who | Kind | Results | Tokens | Share |', '| --- | --- | --- | --- | --- |'];
+  for (const [key, r] of [...rows].sort((a, b) => b[1].w - a[1].w)) {
+    const [who, kind] = key.split(' | ');
+    lines.push(`| ${who} | ${kind} | ${r.n} | ${M(r.tok)} | ${pct(r.w, total)} |`);
+  }
+  const cand = [...rows].filter(([key]) => /Bash \(read-like\)|Read \(text\)/.test(key)).reduce((a, [, r]) => a + r.w, 0);
+  lines.push('', `Reads a Haiku reader could take (read-like Bash plus text Read): ${pct(cand, total)} of tool-output cost. Some of it is files a worker must read to edit them, which stays direct.`);
+  return lines.join('\n');
+}
+
 export function main(argv = process.argv.slice(2)) {
   const opt = (name, d) => { const i = argv.indexOf(`--${name}`); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
   const hours = Number(opt('hours', 48)), cap = opt('cap', null) === null ? null : Number(opt('cap', null)), growth = Number(opt('growth', 80000));
-  if (!(hours > 0) || (cap !== null && !(cap > 0)) || !(growth > 0)) { console.error('usage: usage-report.mjs [--hours 48] [--growth 80000 | --cap <tokens>] [--projects-dir <dir>]'); process.exitCode = 2; return; }
+  if (!(hours > 0) || (cap !== null && !(cap > 0)) || !(growth > 0)) { console.error('usage: usage-report.mjs [--hours 48] [--growth 80000 | --cap <tokens>] [--projects-dir <dir>] [--reads]'); process.exitCode = 2; return; }
   const dir = opt('projects-dir', join(homedir(), '.claude', 'projects'));
+  if (argv.includes('--reads')) { console.log(readsReport(dir, { hours })); return; }
   console.log(summarize(collect(dir, { hours }), { cap, growth, hours }));
 }
 

@@ -17,6 +17,8 @@ What's in here:
 - `agents/history-reader.md`: a Haiku subagent that reads and searches chat
   history and returns a short answer, so long chats stay small. `install.sh`
   links it to `~/.claude/agents/`.
+- `agents/reader.md`: a Haiku subagent for bulk reading (file sweeps, "what
+  does this do", logs) that returns a short answer. `install.sh` links it too.
 - `global/CLAUDE.md`: rules for every session.
 - `wiki.mjs`, `skills/wiki/` and `starter-wiki/`: a wiki your sessions keep,
   so facts survive from one chat to the next.

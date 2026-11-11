@@ -37,8 +37,9 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
     project's wiki page or the notes folder, then keep working in the same chat;
     the app compacts it. Never end a turn or stop work because of the warning.
     The Chief of Staff hub has its own, stricter rules in the cos skill.
-  - Keep the main chat small: hand building, long reads and big outputs to
-    subagents, and summarize what comes back.
+  - Keep the main chat small: hand building, big outputs to
+    subagents, long reads to `reader` (Haiku: searches, logs; diffs and PR
+    reviews stay on Sonnet/Opus); summarize what comes back.
   - Chat history goes through the `history-reader` subagent (Haiku): other
     sessions' transcripts, cloud run events, `~/.claude/projects` files and
     big saved tool-result files, never the main chat. Exception: a status
