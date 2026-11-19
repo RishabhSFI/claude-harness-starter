@@ -1,0 +1,11 @@
+{
+  "maxWorkers": 3,
+  "roleModels": {},
+  "workerModelAfterStart": null,
+  "stopAllModels": 85,
+  "stopFable": 90,
+  "hardStop": 95,
+  "softStopBefore": null,
+  "targetLow": 90,
+  "targetHigh": 97
+}

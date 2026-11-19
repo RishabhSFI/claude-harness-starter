@@ -1,0 +1,30 @@
+{
+  "projects": [
+    {
+      "id": "recipe-box",
+      "name": "Recipe Box",
+      "what": "Small web app for saving and sharing family recipes.",
+      "checkouts": [
+        "~/Projects/recipe-box"
+      ],
+      "aliases": [
+        "recipe box"
+      ],
+      "keywords": [
+        "recipes",
+        "meal plan"
+      ],
+      "public": {
+        "branches": [
+          "main"
+        ],
+        "remotes": [],
+        "notes": [
+          "`vercel deploy --prod` puts the live site out",
+          "the weekly email to subscribers"
+        ]
+      }
+    }
+  ],
+  "retired": []
+}
