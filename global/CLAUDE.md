@@ -1,7 +1,7 @@
 # Rules for every session
 
-Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
-`~/.claude/CLAUDE.md` by `install.sh`. Project CLAUDE.md files add to these.
+Linked to `~/.claude/CLAUDE.md` by `install.sh`. Project CLAUDE.md files add
+to these.
 
 - **Right folder first.** If the request is about a project in
   `~/Projects/claude-harness/projects.json` and this session is in another
@@ -27,8 +27,7 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
 - **Build with pstack.** For anything beyond a one-line change, load the
   pstack:poteto-mode skill and follow its playbook: design first, delegated
   build, independent review before the PR.
-- **Spend usage where it counts** (most usage is long chats re-reading
-  themselves).
+- **Spend usage where it counts.**
   - One task per session. When a task ends in a PR, it's done; new work goes
     to a fresh session with a short brief, and the project's wiki page
     carries the history.
@@ -54,9 +53,11 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
     reviewer for large or risky ones.
 - **Security audit before a PR.** Before opening a PR, run
   `node ~/Projects/claude-harness/gate/security-audit.mjs` in the work folder.
-  Skip it when the project's gate already has the step, since the gate ran it.
+  Skip it when the project's gate already has the step.
   Fix every confirmed high or critical finding. List everything else it found
   in the PR under "Security audit", or write "Security audit: no findings".
+  Frontends also run `node ~/Projects/claude-harness/gate/leak-scan.mjs
+  --dir <build>` after building; a finding blocks the PR.
   Run the full six-phase audit (the `security-audit` skill, full audit mode)
   only when the owner asks or before a project first goes public.
 - **Asked vs delivered.** Every worker report and PR (code, docs, artifacts,
@@ -68,10 +69,9 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
   to the owner as a question, never a guess.
 - **Always review.** Nothing merges without an independent review (a pstack
   review subagent, or a different model) that didn't write the change, and
-  every required check COMPLETED and successful (`node cos.mjs pr-check`
-  reads it; neutral or skipped count as in `status`, but one real success is
-  needed, and in-progress is not a pass). Docs, artifacts, plans and emails get
-  a review too before they reach the owner. Every reviewer, code or not, also
+  every required check COMPLETED and successful (`walls.mjs` checks it on
+  `gh pr merge`). Docs, artifacts, plans and emails get a review too before
+  they reach the owner. Every reviewer, code or not, also
   runs the scope review (the skill above) against the owner's exact words. The
   PR or report says which reviewers ran and what they found. If none ran, run
   one before merging into a project's default or live branch, harness changes
@@ -90,11 +90,13 @@ Kept in `~/Projects/claude-harness/global/CLAUDE.md` and linked to
   harness where `git config harness.starterRepo` is set, run
   `node cos.mjs publish-starter`. A leak-scan failure means fix the leak,
   never skip it.
-- **GitHub: your own repo only.** Pass `-R <owner/repo of origin>` to every
-  `gh pr` and `gh repo` command, and push only to `origin`. Some folders also
-  have an `upstream` remote that is someone else's public repo; never push,
-  open a PR or comment there. Before a scripted commit or push (a loop, a
-  shell script), check `git remote get-url origin` is the repo you mean.
+- **GitHub: your own repo only.** `walls.mjs` refuses pushes to any remote
+  but `origin` and `gh pr`/`gh repo` without `-R <origin owner/repo>`.
+  Never comment on someone else's `upstream`. Scripts that commit or push
+  check `git remote get-url origin` first.
+- **Lessons on the right layer.** Put a lesson on the layer that owns it:
+  hook or permission (harness), memory or never-list, gate check (loop), cos
+  split or route rule (graph). A note only if code can't.
 - **All my projects at once** ("status of everything", "tell <project> to
   ...", "start a new project"): that's the Chief of Staff. Use `/cos`.
 

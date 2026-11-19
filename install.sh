@@ -1,7 +1,7 @@
 #!/bin/sh
 # Links the cos, wiki, until-ready, security-audit and scope-review skills, the history-reader and reader agents and global CLAUDE.md into ~/.claude and
-# registers the hooks: the wrong-folder and chat-size warning (UserPromptSubmit) and the
-# until-ready gate (Stop), and sets CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000 in settings.json env when unset. Safe to rerun. Pass --dry-run to only print actions.
+# registers the hooks: the wrong-folder and chat-size warning (UserPromptSubmit), the
+# until-ready gate (Stop) and the push/gh/merge walls (PreToolUse on Bash), and sets CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000 in settings.json env when unset. Safe to rerun. Pass --dry-run to only print actions.
 set -eu
 
 DRY=0
@@ -92,6 +92,7 @@ const [harness, file, dry] = process.argv.slice(2);
 const HOOKS = [
   { event: 'UserPromptSubmit', command: `node "${harness}/cos.mjs" hook`, timeout: 5, ours: /cos\.mjs"? hook$/ },
   { event: 'Stop', command: `node "${harness}/gate/qa-gate.mjs"`, timeout: 1800, ours: /gate\/qa-gate\.mjs"?$/ },
+  { event: 'PreToolUse', matcher: 'Bash', command: `node "${harness}/walls.mjs"`, timeout: 45, ours: /\/walls\.mjs"?$/ },
 ];
 
 // Settings env values set only when the owner has not set them. A fresh desktop chat already holds 85k-123k tokens,
@@ -133,7 +134,7 @@ if (!todo.length && !envTodo.length) {
     const groups = settings.hooks[h.event] ?? [];
     for (const g of groups) g.hooks = (g.hooks ?? []).filter((x) => !h.ours.test(x.command ?? ''));
     settings.hooks[h.event] = groups.filter((g) => g.hooks.length);
-    settings.hooks[h.event].push({ hooks: [{ type: 'command', command: h.command, timeout: h.timeout }] });
+    settings.hooks[h.event].push({ ...(h.matcher ? { matcher: h.matcher } : {}), hooks: [{ type: 'command', command: h.command, timeout: h.timeout }] });
     console.log(`added hook ${h.command} to ${file}`);
   }
   fs.mkdirSync(path.dirname(file), { recursive: true });

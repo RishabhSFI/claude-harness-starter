@@ -10,6 +10,10 @@ wiki page and write `H/reports/cos-handoff-<date>.md` with **In flight**
 (session id, state), **Waiting on the owner**, **To check**, and **What the
 last hub learned**. Carry that last section forward from the previous
 handoff, add what's new, and drop lines that a tool now does for you.
+A lesson from a mistake goes on the layer that owns it: a hook or
+permission (harness, like `H/walls.mjs`), a memory or never-list entry, a
+required check in the gate (loop), or a split or route rule in cos (graph).
+It becomes a prompt or memory note only when code can't enforce it.
 `node H/cos.mjs learned` prints the newest one. Then keep working in the
 same chat.
 

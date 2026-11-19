@@ -67,7 +67,8 @@ What's in here:
    sh install.sh
    ```
 
-   It links the four skills and the global rules into `~/.claude`, and adds
+   It links the five skills, the two helper agents, the global rules
+   (`CLAUDE.md`) and `pstack-models.md` into `~/.claude`, and adds
    two hooks to `~/.claude/settings.json` (it saves a `.bak` copy first).
    It's safe to run again.
 
