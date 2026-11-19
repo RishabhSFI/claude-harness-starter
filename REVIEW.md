@@ -13,7 +13,9 @@ name.
    correction (broken, redo, verify, ritual, confused, again). Tags are hints,
    not verdicts. Read the messages themselves.
 2. Read `~/Projects/claude-harness/ledger.md`, the running list
-   of lessons and how many days each came up.
+   of lessons and how many days each came up, and
+   `~/Projects/claude-harness/RULES.md`, which pairs each global
+   rule with what enforces it.
 3. For each project with flagged messages, read its CLAUDE.md (and
    `.claude/skills/*/SKILL.md`, `.claude/settings.json`, memory notes under
    `~/.claude/projects/<folder with / replaced by ->/memory/`) so you don't
@@ -51,6 +53,15 @@ Each lesson sits on one rung. Move it up when it comes back:
 A lesson seen on 1 day is a note. On 2 days, propose a rule. On 3 or more
 days, or if it's already a rule and still happening, propose a check or an
 automatic step.
+
+## Rule table
+
+When a lesson breaks a global rule, find the rule in `RULES.md`. If its
+enforcer is "nothing" or warn-only and the lesson has come up before, it's a
+repeat: the proposal is the fix one rung up (structure, then a check whose
+error names the fix, then a test, docs last), never another note. When a
+check or hook has landed for a rule, propose the matching `RULES.md` row
+change in the report; you don't edit `RULES.md` yourself.
 
 ## What you may do on your own
 
@@ -99,9 +110,10 @@ YYYY-MM-DD):
   then run `node ~/Projects/claude-harness/wiki.mjs record <id> --pr <repo>#<number>`
   for each. Already-recorded PRs change nothing. This writes only to the wiki.
 - **Security audit.** For each PR merged yesterday, run
-  `node ~/Projects/claude-harness/gate/security-audit.mjs --pr <repo>#<number>`
-  with that project's checkout as the working folder. It reads files there,
-  and the script itself runs no git commands. Report confirmed findings per project. Flag a merged PR
+  `node ~/Projects/claude-harness/gate/security-audit.mjs --pr <repo>#<number>`.
+  It fetches the changed files at the PR's head commit into a temporary
+  snapshot and audits there, so the project checkout (often on an older
+  commit) is never read, and it runs no git commands. Report confirmed findings per project. Flag a merged PR
   whose description has no "Security audit" section. Never fix or comment. Each
   run costs usage: with more than about 10 merged PRs, audit the 10 largest
   and list the rest.
@@ -157,11 +169,25 @@ Keep it short. If nothing needs changing, say so in one line and stop.
 `ledger.md` is a table, one row per lesson, newest change at the top:
 
 ```
-| Lesson | Project | Days seen | Last seen | Rung | Status |
+| Lesson | Project | Days seen | Last seen | Rung | Status | Expected | Result |
 ```
 
 Status is `noted`, `proposed`, `applied` (you applied it: you can tell
-when the rule or check now exists in the project) or `done` (it stopped
-coming up for 14 days).
+when the rule or check now exists in the project), `reopened` or `done`.
+
+Expected and Result record what each fix was meant to do and whether it did:
+
+- **When a row becomes `applied`**, write in Expected the one thing you could
+  observe that should change (for example "no merge of a risky diff without
+  an Opus review line"), and in Result `check <date 3 days on>`. Write `-`
+  when nothing observable was claimed.
+- **On or after that date**, look for it in the digest and the sweep. If the
+  mistake didn't come back, write `held <date>: <evidence>`. If it came back,
+  write `missed <date>: <evidence>`, set Status to `reopened`, add the day to
+  Days seen, and propose the next rung up in the report. A `missed` row is
+  never counted as done.
+- **Done** means Result says `held` and the lesson hasn't come up for 14
+  days since.
+
 
 Finish with a two-line summary of the report and its path.

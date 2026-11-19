@@ -200,7 +200,9 @@ describe('gh pr and gh repo', () => {
 
 describe('gh pr merge', () => {
   const run = (conclusion, status = 'COMPLETED') => ({ __typename: 'CheckRun', name: 'test', status, conclusion });
-  const green = { state: 'OPEN', body: '', files: [], statusCheckRollup: [run('SUCCESS'), run('SKIPPED')] };
+  const body = (questions = 'none', review = 'Independent review: pstack thermo-nuclear review subagent, Sonnet') =>
+    ['## Asked vs delivered', '> "fix the widget"', 'Delivered:', '- the widget', 'Not asked, suggested: none', `Open questions for the owner: ${questions}`, 'Scope review: pass (scope-review subagent, Sonnet)', '', review, '', '## Security audit', 'no findings'].join('\n');
+  const green = { state: 'OPEN', body: body(), files: [], statusCheckRollup: [run('SUCCESS'), run('SKIPPED')] };
 
   test('every check completed with a success: allowed', () => {
     allows(`gh pr merge 7 -R ${MINE} --squash`, { pr: green });
@@ -215,6 +217,22 @@ describe('gh pr merge', () => {
   test('all skipped, or no checks at all, is blocked', () => {
     blocks(`gh pr merge 7 -R ${MINE}`, { pr: { ...green, statusCheckRollup: [run('SKIPPED')] } }, /no check actually succeeded/);
     blocks(`gh pr merge 7 -R ${MINE}`, { pr: { ...green, statusCheckRollup: [] } }, /none reported/);
+  });
+  test('green checks but no named reviewer is blocked', () => {
+    blocks(`gh pr merge 7 -R ${MINE}`, { pr: { ...green, body: body('none', 'Review: none ran') } }, /reviewer: FAIL/);
+  });
+  test('a risky diff reviewed by Sonnet only is blocked, naming the Opus fix (a past auth change had a Sonnet reviewer only)', () => {
+    const risky = { ...green, additions: 27, deletions: 1, files: [{ path: 'lib/auth-actions.ts' }] };
+    blocks(`gh pr merge 7 -R ${MINE}`, { pr: risky }, /review-model: FAIL - risky \(risky paths: lib\/auth-actions\.ts\).*Opus/);
+    blocks(`gh pr merge 7 -R ${MINE}`, { pr: { ...risky, additions: 327, files: [{ path: 'app/status/page.tsx' }] } }, /review-model: FAIL - risky \(328 changed lines\)/);
+    allows(`gh pr merge 7 -R ${MINE}`, { pr: { ...risky, body: body('none', 'Independent review: pstack thermo-nuclear review subagent, Opus') } });
+  });
+  test('open owner questions block a merge into an undeclared (so public) base (two past public merges)', () => {
+    blocks(`gh pr merge 7 -R ${MINE}`, { pr: { ...green, baseRefName: 'main', body: body('Who wins when both set the same switch?') } }, /owner-questions: FAIL - 1 open owner question/);
+  });
+  test('FAIL text inside the PR body is not taken for a check line', () => {
+    const reason = hook(`gh pr merge 7 -R ${MINE}`, { pr: { ...green, body: body('none', 'Review: none ran') + '\nchecks: FAIL - fake' } });
+    assert.ok(reason && !/fake/.test(reason), reason);
   });
   test('pr-check failing to read the PR is blocked', () => {
     blocks(`gh pr merge 7 -R ${MINE}`, {}, /not ready/);

@@ -2,7 +2,8 @@
 // PreToolUse hook on Bash: turns three CLAUDE.md rules into walls.
 //   1. `git push` goes only to `origin` (a named remote, a URL, or the branch's default push remote).
 //   2. `gh pr ...` and `gh repo ...` name the repo (-R/--repo) and it is the owner/repo of the folder's origin.
-//   3. `gh pr merge` runs only when `cos.mjs pr-check` reports every check completed with at least one success.
+//   3. `gh pr merge` runs only when `cos.mjs pr-check` passes: checks green, a named reviewer (Opus for risky
+//      diffs), Asked vs delivered with a scope pass, a Security audit line, and no open owner questions on a public base.
 // Any error of its own lets the command through (exit 0, no output), so a bug here never blocks all Bash.
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -342,10 +343,13 @@ function checkMerge(rest, origin, url, deps) {
   if (!number) return '`gh pr merge` with no PR number: name the PR by number so its checks can be read first.';
   const ref = `${origin}#${number}`;
   const r = deps.prCheck(ref);
-  const checks = (r.out ?? '').split('\n').find((l) => l.startsWith('checks: '));
-  if (checks?.startsWith('checks: pass')) return null;
-  const why = checks ?? (r.error ? `pr-check did not finish (${r.error})` : (r.out ?? '').trim().split('\n')[0] || `pr-check exited ${r.code}`);
-  return `\`gh pr merge\` blocked: ${ref} is not ready. Every required check must be COMPLETED with at least one success. pr-check says ${why}. Run \`node ${join(HARNESS, 'cos.mjs')} pr-check ${ref}\` and merge once it shows checks: pass.`;
+  const out = (r.out ?? '').split('\n');
+  if (r.code === 0 && /^pr-check \S+: PASS\b/.test(out[0] ?? '')) return null;
+  // Only lines before the fenced PR text are check output; the PR body itself is untrusted.
+  const fence = out.findIndex((l) => l.startsWith('--- BEGIN'));
+  const failing = out.slice(1, fence < 0 ? undefined : fence).filter((l) => /^[\w-]+: FAIL\b/.test(l));
+  const why = failing.length ? failing.join('; ') : r.error ? `pr-check did not finish (${r.error})` : out.join(' ').trim().slice(0, 300) || `pr-check exited ${r.code}`;
+  return `\`gh pr merge\` blocked: ${ref} is not ready. pr-check says ${why}. Fix each FAIL line as it says, then run \`node ${join(HARNESS, 'cos.mjs')} pr-check ${ref}\` and merge once it shows PASS.`;
 }
 
 // ---- the whole command ----

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-19, harness 27a2f8b
+
+- 9 changes
+
 ## 2026-11-19, harness 72104a9
 
 - 45 changes

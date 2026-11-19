@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { capStatus, checkState, DECISIONS, evaluatePr, loadConfig, parsePrRef, rateWindow, renderPrCheck, repoFromRemote, resolveConfig, runPrCheck, runTool, stopRule, workerModel } from '../cos-tools.mjs';
+import { capStatus, checkState, DECISIONS, evaluatePr, loadConfig, publicBaseOf, riskOf, parsePrRef, rateWindow, renderPrCheck, repoFromRemote, resolveConfig, runPrCheck, runTool, stopRule, workerModel } from '../cos-tools.mjs';
 
 const COS = fileURLToPath(new URL('../cos.mjs', import.meta.url));
 const run = (...args) => spawnSync(process.execPath, [COS, ...args], { encoding: 'utf8' });
@@ -37,6 +37,53 @@ const good = (over = {}) => ({ body: BODY, files: [{ path: 'app/page.tsx' }], st
 const failing = (r, name) => r.lines.find((l) => l.name === name && l.status === 'FAIL');
 
 describe('pr-check', () => {
+  const line = (r, name) => r.lines.find((l) => l.name === name);
+  const sonnet = BODY.replace('Code review: independent reviewer, Opus subagent', 'Code review: independent reviewer, Sonnet subagent').replace('(scope reviewer subagent, opus)', '(scope reviewer subagent, sonnet)');
+
+  test('a risky diff needs an Opus review line (past merges: a 28-line auth change and a 328-line page, both Sonnet-only)', () => {
+    assert.equal(riskOf({ additions: 20, deletions: 3 }, ['app/page.tsx']), null);
+    assert.match(riskOf({ additions: 27, deletions: 1 }, ['lib/auth-actions.ts']), /risky paths: lib\/auth-actions\.ts/);
+    assert.match(riskOf({ additions: 327, deletions: 1 }, ['app/status/page.tsx']), /328 changed lines/);
+    for (const f of ['db/migrations/0042.sql', 'lib/billing.ts', 'mc/merge.mjs', 'lib/delete-account.ts']) assert.ok(riskOf({}, [f]), f);
+    assert.equal(line(evaluatePr(good({ body: sonnet })), 'review-model').status, 'n/a', 'small and safe: Sonnet is enough');
+    const auth = evaluatePr(good({ body: sonnet, additions: 27, deletions: 1, files: [{ path: 'lib/auth-actions.ts' }] }));
+    assert.ok(failing(auth, 'review-model'));
+    assert.match(line(auth, 'review-model').note, /Opus/, 'the error names the fix');
+    assert.equal(line(evaluatePr(good({ additions: 400 })), 'review-model').status, 'pass', 'an Opus review line passes it');
+    const scopeOnly = sonnet.replace('(scope reviewer subagent, sonnet)', '(scope reviewer subagent, opus)');
+    assert.ok(failing(evaluatePr(good({ body: scopeOnly, additions: 400 })), 'review-model'), 'an Opus scope review is not the code review');
+    const sameLine = sonnet.replace(/^Code review:.*$/m, 'Reviewers: thermo-nuclear subagent (Sonnet); Scope review: pass (scope subagent, Opus)');
+    assert.ok(failing(evaluatePr(good({ body: sameLine, additions: 400 })), 'review-model'), 'an Opus scope verdict on the code review line does not count');
+    const outOfUsage = sonnet.replace(/^Code review:.*$/m, 'Independent review: Sonnet subagent (Opus was out of usage)');
+    assert.ok(failing(evaluatePr(good({ body: outOfUsage, additions: 400 })), 'review-model'), '"Opus was out of usage" is not an Opus review');
+    for (const ok of ['Independent review: Opus, which is thorough', 'Reviewed by Opus - not blocking', 'Scope review: pass (x, Sonnet); Code review: Opus subagent']) {
+      assert.equal(line(evaluatePr(good({ body: sonnet.replace(/^Code review:.*$/m, ok), additions: 400 })), 'review-model').status, 'pass', ok);
+    }
+    for (const f of ['middleware.ts', 'lib/session.ts', 'lib/jwt.ts', '.env.example']) assert.ok(riskOf({}, [f]), f);
+  });
+
+  test('open owner questions fail on a public or undeclared base and only flag on a non-public one (past public merges went live with them)', () => {
+    const asked = BODY.replace('Open questions for the owner:\n- none', 'Open questions for the owner:\n- If the owner and staff set the same switch differently, who wins?');
+    assert.equal(line(evaluatePr(good()), 'owner-questions').status, 'pass');
+    assert.ok(failing(evaluatePr(good({ body: asked, baseRefName: 'main' })), 'owner-questions'), 'undeclared counts as public');
+    assert.ok(failing(evaluatePr(good({ body: asked }), { publicBase: true }), 'owner-questions'));
+    const flagged = evaluatePr(good({ body: asked }), { publicBase: false });
+    assert.equal(line(flagged, 'owner-questions').status, 'FLAG');
+    assert.equal(flagged.ok, true);
+  });
+
+  test('publicBaseOf reads the base branch from projects.json', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pub-'));
+    const reg = join(dir, 'projects.json');
+    writeFileSync(reg, JSON.stringify({ projects: [{ id: 'a', repos: ['me/site'], public: { branches: ['main'] } }, { id: 'b', repos: ['me/tool'], public: { branches: [] } }] }));
+    assert.equal(publicBaseOf('Me/Site', 'main', reg), true);
+    assert.equal(publicBaseOf('me/site', 'dev', reg), false);
+    assert.equal(publicBaseOf('me/tool', 'main', reg), false);
+    assert.equal(publicBaseOf('me/other', 'main', reg), null);
+    assert.equal(publicBaseOf('me/site', 'main', join(dir, 'missing.json')), null);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test('a clean PR passes every line', () => {
     const r = evaluatePr(good());
     assert.equal(r.ok, true, JSON.stringify(r.lines));

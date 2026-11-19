@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { diffFiles } from '../gate/security-audit.mjs';
 
 const ROOT = realpathSync(join(fileURLToPath(import.meta.url), '..', '..'));
 const SCRIPT = join(ROOT, 'gate', 'security-audit.mjs');
@@ -141,5 +142,84 @@ describe('security-audit gate', () => {
     });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /no claude binary/);
+  });
+});
+
+describe('security-audit --pr', () => {
+  // The sweep ran this in a project checkout on an older commit (9 PRs over 5 days), so the
+  // auditor read files that weren't the PR's. PR mode must read the PR head, never the folder it runs in.
+  const HEAD = 'a'.repeat(40);
+  let tmp;
+  let ghFake;
+  let claudeFake;
+  let seen;
+  before(() => {
+    tmp = realpathSync(mkdtempSync(join(tmpdir(), 'sec-audit-pr-')));
+    writeFileSync(join(tmp, 'a.js'), 'export const stale = "checkout";\n');
+    mkdirSync(join(tmp, 'bin'));
+    ghFake = join(tmp, 'bin', 'gh');
+    writeFileSync(
+      ghFake,
+      `#!/bin/sh
+case "$1 $2" in
+  "pr diff") printf 'diff --git a/a.js b/a.js\\n--- a/a.js\\n+++ b/a.js\\n@@ -1 +1 @@\\n-old\\n+export const head = "pr";\\ndiff --git a/gone.js b/gone.js\\ndeleted file mode 100644\\ndiff --git a/CLAUDE.md b/CLAUDE.md\\n+++ b/CLAUDE.md\\n+x\\n'"$FAKE_EXTRA" ;;
+  "pr view") echo ${HEAD} ;;
+  "api -H") case "$4" in *"contents/a.js?ref=${HEAD}") printf 'export const head = "pr";\\n' ;; *) exit 1 ;; esac ;;
+  *) exit 3 ;;
+esac
+`,
+    );
+    chmodSync(ghFake, 0o755);
+    seen = join(tmp, 'seen.json');
+    claudeFake = join(tmp, 'claude.mjs');
+    writeFileSync(
+      claudeFake,
+      `#!/usr/bin/env node
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+const prompt = process.argv[process.argv.indexOf('-p') + 1];
+writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ cwd: process.cwd(), a: readFileSync('a.js', 'utf8'), gone: existsSync('gone.js'), prompt }));
+process.stdout.write(JSON.stringify({ is_error: false, structured_output: { summary: '', findings: [] } }));
+`,
+    );
+    chmodSync(claudeFake, 0o755);
+  });
+  after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  test('audits the files at the PR head commit, not the stale checkout it runs in', () => {
+    const r = spawnSync('node', [SCRIPT, '--pr', `me/proj#${process.pid}`], { cwd: tmp, encoding: 'utf8', env: { ...process.env, GH_BIN: ghFake, PATH: `${join(tmp, 'bin')}:${process.env.PATH}`, CLAUDE_BIN: claudeFake, HOME: tmp } });
+    assert.equal(r.status, 0, r.stderr);
+    const s = JSON.parse(readFileSync(seen, 'utf8'));
+    assert.notEqual(s.cwd, tmp, 'runs outside the project checkout');
+    assert.equal(s.a, 'export const head = "pr";\n', 'reads the head version of a changed file');
+    assert.equal(s.gone, false, 'a file deleted by the PR is not in the snapshot');
+    assert.match(s.prompt, new RegExp(`head commit ${HEAD}`));
+    assert.equal(existsSync(s.cwd), false, 'the snapshot is removed afterwards');
+  });
+
+  test('steering files and failed fetches are named in the prompt, and the result is not cached', () => {
+    const env = { ...process.env, GH_BIN: ghFake, CLAUDE_BIN: claudeFake, HOME: tmp, FAKE_EXTRA: 'diff --git a/flaky.js b/flaky.js\\n+++ b/flaky.js\\n+y\\n' };
+    const run = () => spawnSync('node', [SCRIPT, '--pr', 'me/proj#77'], { cwd: tmp, encoding: 'utf8', env });
+    assert.equal(run().status, 0);
+    const s = JSON.parse(readFileSync(seen, 'utf8'));
+    assert.match(s.prompt, /judge from the diff only:\nCLAUDE\.md\nflaky\.js/);
+    rmSync(seen);
+    const again = run();
+    assert.doesNotMatch(again.stdout, /cached result/);
+    assert.ok(existsSync(seen), 'ran the audit again');
+  });
+});
+
+describe('diffFiles', () => {
+  test('reads paths from the +++ line, marks deletions, and sets quoted headers aside', () => {
+    const diff = [
+      'diff --git a/x b/y.js b/x b/y.js', '--- a/x b/y.js', '+++ b/x b/y.js', '@@ -1 +1 @@', '+a',
+      'diff --git a/gone.js b/gone.js', 'deleted file mode 100644', '--- a/gone.js', '+++ /dev/null',
+      'diff --git a/old.js b/new.js', 'similarity index 100%', 'rename from old.js', 'rename to new.js',
+      'diff --git "a/caf\\303\\251.js" "b/caf\\303\\251.js"', '+++ "b/caf\\303\\251.js"',
+    ].join('\n');
+    const { files, deleted, quoted } = diffFiles(diff);
+    assert.deepEqual(files, ['x b/y.js', 'gone.js', 'new.js']);
+    assert.deepEqual([...deleted], ['gone.js']);
+    assert.equal(quoted.length, 1);
   });
 });

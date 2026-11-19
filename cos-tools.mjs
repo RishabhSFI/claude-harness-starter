@@ -1,7 +1,7 @@
 // Small checks the hub runs instead of reading things itself. Each prints a few check lines it can trust; PR text that pr-check quotes is fenced and stays untrusted data.
 // They check and report; merging and every other act stays the hub's, after the owner's yes.
 //
-//   cos.mjs pr-check <owner/repo#N | N> [-R owner/repo] [--allow-no-checks] [--fixture pr.json]   (also prints the PR's Asked-vs-delivered section, first 60 lines)
+//   cos.mjs pr-check <owner/repo#N | N> [-R owner/repo] [--allow-no-checks] [--fixture pr.json] [--registry projects.json]   (also prints the PR's Asked-vs-delivered section, first 60 lines)
 //   cos.mjs stop-rule --all <pct> --fable <pct> [--five-hour <pct>] [--now <ISO time>] [--workers N]
 //   cos.mjs rate --start-all A --start-fable B --now-all C --now-fable D --worker-hours H
 //   cos.mjs cap --working N [--want W] [--json]
@@ -111,15 +111,29 @@ const REVIEWER_LINE = /\b(?:independent\s+)?review(?:ers?|ed by)?\b[^\n]*\b(?:op
 /** True for a body line that names a code reviewer: not a negation, and not only the scope review. */
 const namesReviewer = (l) => !NOT_A_REVIEW.test(l) && REVIEWER_LINE.test(l.replace(SCOPE_PHRASE, ''));
 
+// global/CLAUDE.md "Size reviews": Opus for large or risky diffs (about 150 lines, or auth, money, data deletion or merge logic).
+export const RISKY_LINES = 150;
+const RISKY_PATH = /auth|login|passw|secret|session|jwt|cookie|middleware|crypto|\.env|\brls\b|polic|permission|payment|billing|stripe|invoice|payout|refund|accounting|money|wallet|delete|purge|migration|\.sql$|merge/i;
+
+/** Why a PR needs an Opus review, or null when a Sonnet review is enough. */
+export function riskOf(pr, files) {
+  const size = (Number(pr?.additions) || 0) + (Number(pr?.deletions) || 0);
+  const paths = files.filter((f) => RISKY_PATH.test(f));
+  const why = [];
+  if (size >= RISKY_LINES) why.push(`${size} changed lines`);
+  if (paths.length) why.push(`risky paths: ${paths.slice(0, 3).join(', ')}${paths.length > 3 ? ` (+${paths.length - 3})` : ''}`);
+  return why.length ? why.join('; ') : null;
+}
+
 /** A passing check is an actual SUCCESS, not NEUTRAL or SKIPPED (those don't fail, but all-skipped proves nothing). */
 const succeeded = (c) => String(c?.conclusion ?? c?.state ?? '').toUpperCase() === 'SUCCESS';
 
 /**
  * @param {{body?: string, files?: ({path?: string} | string)[], statusCheckRollup?: object[]}} pr as `gh pr view --json body,files,statusCheckRollup` returns it
- * @param {{allowNoChecks?: boolean}} [opts]
+ * @param {{allowNoChecks?: boolean, publicBase?: boolean | null}} [opts] publicBase: false only when projects.json says the base branch is not public
  * @returns {{ok: boolean, lines: {name: string, status: 'pass' | 'FAIL' | 'FLAG' | 'n/a', note: string}[]}}
  */
-export function evaluatePr(pr, { allowNoChecks = false } = {}) {
+export function evaluatePr(pr, { allowNoChecks = false, publicBase = null } = {}) {
   const body = typeof pr?.body === 'string' ? pr.body : '';
   const lines = [];
   const add = (name, status, note) => lines.push({ name, status, note });
@@ -143,12 +157,24 @@ export function evaluatePr(pr, { allowNoChecks = false } = {}) {
   add('asked-vs-delivered', noSection ? 'FAIL' : 'pass', noSection ? 'section missing' : 'section present');
   add('scope-check', ledger.ok ? 'pass' : 'FAIL', ledger.ok ? 'passes' : ledger.problems.filter((p) => !/No "## Asked vs delivered" section/.test(p))[0] ?? 'section missing');
 
-  const reviewer = body.split('\n').find(namesReviewer);
-  add('reviewer', reviewer ? 'pass' : 'FAIL', reviewer ? 'a review line (other than the scope verdict) names who or which model' : 'body names no independent reviewer and model');
+  const reviewLines = body.split('\n').filter(namesReviewer);
+  add('reviewer', reviewLines.length ? 'pass' : 'FAIL', reviewLines.length ? 'a review line (other than the scope verdict) names who or which model' : 'body names no independent reviewer and model; run one on the final diff and add "Independent review: <reviewer>, <model>"');
+
+  const files = (pr?.files ?? []).map((f) => (typeof f === 'string' ? f : f?.path ?? '')).filter(Boolean);
+  const risk = riskOf(pr, files);
+  // The whole scope verdict goes (its model is not the code reviewer's), and "Opus was out of usage" is not an Opus review.
+  const opus = reviewLines.some((l) => /\bopus\b(?![^\n]{0,12}\b(?:was\b|unavailable|out of|failed|skipped|did not|didn't))/i.test(l.replace(/scope[\s-]review(?:er)?\b[^;\n]*/gi, '')));
+  if (!risk) add('review-model', 'n/a', `under ${RISKY_LINES} lines, no risky paths: a Sonnet review is enough`);
+  else add('review-model', opus ? 'pass' : 'FAIL', opus ? `risky (${risk}) and a review line names Opus` : `risky (${risk}) but no review line names Opus. global/CLAUDE.md "Size reviews" asks for an Opus reviewer: run one on the final diff and name it ("Independent review: <reviewer>, Opus")`);
+
+  const base = pr?.baseRefName ? `"${pr.baseRefName}"` : 'the base branch';
+  const open = ledger.openQuestions;
+  if (!open.length) add('owner-questions', 'pass', 'no open owner questions');
+  else if (publicBase === false) add('owner-questions', 'FLAG', `${open.length} open owner question(s); ${base} is not public in projects.json`);
+  else add('owner-questions', 'FAIL', `${open.length} open owner question(s) and ${base} is ${publicBase ? 'public in projects.json' : 'not declared in projects.json, so treated as public'}. A "merge it" is not an answer: ask the owner, write each answer into the body, then set "Open questions for the owner: none"`);
   const audit = /security audit/i.test(body);
   add('security-audit', audit ? 'pass' : 'FAIL', audit ? '"Security audit" line present' : 'no "Security audit" line');
 
-  const files = (pr?.files ?? []).map((f) => (typeof f === 'string' ? f : f?.path ?? '')).filter(Boolean);
   const ui = files.filter((f) => UI_FILE.test(f));
   if (!ui.length) add('phone-shots', 'n/a', 'no UI files changed');
   else {
@@ -197,9 +223,26 @@ export function parsePrRef(ref, repoFlag) {
 
 /** The default fetcher: `gh pr view`, with -R always passed. Tests pass their own. */
 export function ghFetchPr({ repo, number }, gh = process.env.GH_BIN || 'gh') {
-  const r = spawnSync(gh, ['pr', 'view', String(number), '-R', repo, '--json', 'body,files,statusCheckRollup,state,baseRefName'], { encoding: 'utf8', timeout: 20_000 });
+  const r = spawnSync(gh, ['pr', 'view', String(number), '-R', repo, '--json', 'body,files,statusCheckRollup,state,baseRefName,additions,deletions'], { encoding: 'utf8', timeout: 20_000 });
   if (r.status !== 0) throw new Error(`gh pr view failed: ${(r.stderr || r.error?.message || '').split('\n')[0]}`);
   return JSON.parse(r.stdout);
+}
+
+/**
+ * Whether merging into `base` of `repo` is public, from projects.json: true or false when a project declares
+ * the repo, null when nothing declares it (the global rule: when unsure, treat it as public).
+ */
+export function publicBaseOf(repo, base, registryFile = join(SELF_DIR, 'projects.json')) {
+  let projects;
+  try {
+    projects = JSON.parse(readFileSync(registryFile, 'utf8')).projects ?? [];
+  } catch {
+    return null;
+  }
+  const want = String(repo ?? '').toLowerCase();
+  const p = projects.find((x) => (x.repos ?? []).some((r) => String(r).toLowerCase() === want));
+  if (!p || !p.public || !Array.isArray(p.public.branches)) return null;
+  return p.public.branches.includes(base);
 }
 
 function originRepo() {
@@ -216,7 +259,8 @@ export function runPrCheck(args, { fetchPr = ghFetchPr, out = console.log, err =
     if (!ref.repo && !flags.fixture) ref.repo = originOf();
     if (!ref.repo && !flags.fixture) throw new Error('no repo: pass owner/repo#N or -R owner/repo');
     const pr = flags.fixture ? JSON.parse(readFileSync(flags.fixture, 'utf8')) : fetchPr(ref);
-    const result = evaluatePr(pr, { allowNoChecks: !!flags['allow-no-checks'] });
+    const publicBase = ref.repo ? publicBaseOf(ref.repo, pr?.baseRefName, flags.registry) : null;
+    const result = evaluatePr(pr, { allowNoChecks: !!flags['allow-no-checks'], publicBase });
     out(renderPrCheck(`${ref.repo ?? 'fixture'}#${ref.number}`, result, pr?.body));
     return result.ok ? 0 : 1;
   } catch (e) {

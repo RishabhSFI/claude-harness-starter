@@ -7,8 +7,10 @@
 //   node security-audit.mjs [--base <ref>] [--fail-on critical|high|medium|low|none]
 //                           [--model opus] [--timeout 600] [--json]
 // PR mode: node security-audit.mjs --pr owner/repo#N
-//   Reads the diff with gh and never runs git in the current folder, so the
-//   daily review can use it on a project's checkout.
+//   Reads the diff with gh and fetches every changed file at the PR's head
+//   commit into a temporary snapshot, and the audit runs there. It never reads
+//   or runs git in the current folder, so a stale project checkout can't skew
+//   it. GH_BIN overrides the gh binary.
 //
 // A project turns it on with one step in .claude/gate.json:
 //   { "name": "security audit", "run": "node ~/Projects/claude-harness/gate/security-audit.mjs" }
@@ -18,9 +20,9 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, lstatSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, lstatSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const VERSION = '3';
@@ -138,19 +140,84 @@ function localDiff(cwd, requestedBase) {
 }
 
 function ghBinary() {
+  if (process.env.GH_BIN) return process.env.GH_BIN;
   const local = join(homedir(), '.local', 'bin', 'gh');
   return existsSync(local) ? local : 'gh';
 }
 
-function prDiff(spec) {
-  const m = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(spec);
-  if (!m) usage('--pr takes owner/repo#N');
+const SNAPSHOT_FILES = 300;
+
+function gh(args, what) {
   try {
-    return execFileSync(ghBinary(), ['pr', 'diff', '-R', m[1], m[2]], { encoding: 'utf8', maxBuffer: 256 << 20, stdio: ['ignore', 'pipe', 'pipe'] });
+    return execFileSync(ghBinary(), args, { encoding: 'utf8', maxBuffer: 256 << 20, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
-    console.error(`security-audit: gh pr diff failed: ${String(e.stderr || e.message).trim().split('\n').pop()}`);
+    console.error(`security-audit: ${what} failed: ${String(e.stderr || e.message).trim().split('\n').pop()}`);
     process.exit(2);
   }
+}
+
+/** The changed paths a unified diff names (new side), the ones it deletes, and headers git quoted (unusual names), in order. */
+export function diffFiles(diff) {
+  const files = [];
+  const deleted = new Set();
+  const quoted = [];
+  for (const block of diff.split(/^(?=diff --git )/m)) {
+    const header = block.match(/^diff --git (.+)$/m)?.[1];
+    if (!header) continue;
+    if (header.startsWith('"') || header.includes(' "')) {
+      quoted.push(header);
+      continue;
+    }
+    // "+++ b/<path>" is exact; the header is the fallback for binary files and pure renames.
+    let path = block.match(/^\+\+\+ b\/(.+)$/m)?.[1] ?? block.match(/^rename to (.+)$/m)?.[1] ?? header.match(/^a\/(.+) b\/\1$/)?.[1] ?? header.match(/ b\/(.+)$/)?.[1];
+    path = path?.replace(/\t$/, '');
+    if (!path || files.includes(path)) continue;
+    files.push(path);
+    if (/^deleted file mode /m.test(block)) deleted.add(path);
+  }
+  return { files, deleted, quoted };
+}
+
+// The auditor runs inside the snapshot; files that steer Claude Code itself stay out of it and are judged from the diff.
+const STEERING = /(^|\/)(\.claude|\.mcp\.json$|CLAUDE\.md$|AGENTS\.md$|\.agents)(\/|$)/;
+
+/** The PR's diff, its head commit, and a snapshot folder holding each changed file as it is at that commit. */
+function prSnapshot(spec) {
+  const m = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(spec);
+  if (!m) usage('--pr takes owner/repo#N');
+  const [, repo, number] = m;
+  const diff = gh(['pr', 'diff', '-R', repo, number], 'gh pr diff');
+  const head = gh(['pr', 'view', number, '-R', repo, '--json', 'headRefOid', '--jq', '.headRefOid'], 'gh pr view').trim();
+  if (!/^[0-9a-f]{40}$/.test(head)) {
+    console.error(`security-audit: gh pr view gave no head commit for ${spec}`);
+    process.exit(2);
+  }
+  const { files, deleted, quoted } = diffFiles(diff);
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'security-audit-pr-')));
+  // A path not fetched for any reason other than its deletion is named in the prompt, and the result isn't cached.
+  const skipped = [...quoted];
+  let fetched = 0;
+  for (const path of files) {
+    const dest = resolve(dir, path);
+    if (deleted.has(path)) continue;
+    if (!dest.startsWith(dir + sep) || STEERING.test(path) || fetched >= SNAPSHOT_FILES) {
+      skipped.push(path);
+      continue;
+    }
+    const r = spawnSync(ghBinary(), ['api', '-H', 'Accept: application/vnd.github.raw', `repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${head}`], { maxBuffer: 64 << 20 });
+    if (r.status !== 0 || r.stdout.length > FILE_LIMIT) {
+      skipped.push(path);
+      continue;
+    }
+    try {
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(dest, r.stdout);
+      fetched++;
+    } catch {
+      skipped.push(path);
+    }
+  }
+  return { diff, head, files, dir, skipped };
 }
 
 function findClaude() {
@@ -171,7 +238,7 @@ function findClaude() {
   return found[0]?.bin ?? null;
 }
 
-function buildPrompt({ mode, diffInline, diffFile, files }) {
+function buildPrompt({ mode, diffInline, diffFile, files, head, skipped = [] }) {
   const lines = [
     `Read ${join(SKILL_DIR, 'SKILL.md')} and follow it in guidance mode: a focused review of one change, not the six-phase audit. Write no files and create no output directory.`,
     'Review only what this diff changes and the code it touches. Follow the skill\'s rules for verdicts and severity: only a confirmed finding gets a severity, and a finding that depends on a fact outside the source is needs_validation with severity null.',
@@ -181,7 +248,10 @@ function buildPrompt({ mode, diffInline, diffFile, files }) {
   ];
   if (diffInline) lines.push('The diff is on stdin.');
   else lines.push(`The diff is too large to inline. Read it in parts from ${diffFile}. Changed files:\n${files.join('\n')}`);
-  if (mode === 'pr') lines.push('You are in the project checkout, which may be on a different commit from the pull request. Read files there for context and report what the diff shows.');
+  if (mode === 'pr') {
+    lines.push(`You are in a snapshot of the files this pull request changes, as they are at its head commit ${head}. Files it doesn't change are not here; judge them from the diff only.`);
+    if (skipped.length) lines.push(`Too large or too many to fetch, so judge from the diff only:\n${skipped.join('\n')}`);
+  }
   return lines.join('\n\n');
 }
 
@@ -240,20 +310,22 @@ function main() {
   const opts = parseArgs(process.argv.slice(2));
   const mode = opts.pr ? 'pr' : 'local';
   const cwd = process.cwd();
-  let diff;
-  let ctx = {};
-  if (mode === 'pr') diff = prDiff(opts.pr);
-  else {
-    ctx = localDiff(cwd, opts.base);
-    diff = ctx.diff;
+  const ctx = mode === 'pr' ? prSnapshot(opts.pr) : localDiff(cwd, opts.base);
+  try {
+    return audit({ opts, mode, cwd, diff: ctx.diff, ctx });
+  } finally {
+    if (ctx.dir) rmSync(ctx.dir, { recursive: true, force: true });
   }
+}
+
+function audit({ opts, mode, cwd, diff, ctx }) {
   if (!diff.trim()) {
     console.log('no changes to audit');
     return 0;
   }
 
   const cacheDir = mode === 'pr' ? join(homedir(), '.cache', 'claude-harness', 'security-audit') : join(mainCheckout(ctx.top), '.claude', 'security-audit');
-  const key = createHash('sha256').update(diff).update('\0').update(opts.failOn).update('\0').update(opts.model).update('\0').update(VERSION).digest('hex');
+  const key = createHash('sha256').update(diff).update('\0').update(opts.failOn).update('\0').update(opts.model).update('\0').update(VERSION).update(mode === 'pr' ? '\0head-snapshot' : '').digest('hex');
   const cacheFile = join(cacheDir, `${key}.json`);
   if (existsSync(cacheFile)) {
     try {
@@ -272,8 +344,8 @@ function main() {
   const diffDir = diffInline ? null : mkdtempSync(join(tmpdir(), 'security-audit-'));
   const diffFile = diffDir && join(diffDir, 'change.diff');
   if (diffFile) writeFileSync(diffFile, diff);
-  const prompt = buildPrompt({ mode, diffInline, diffFile, files: ctx.files ?? [] });
-  const run = runClaude({ bin, prompt, input: diffInline ? diff : undefined, opts, cwd: ctx.top ?? cwd, diffDir });
+  const prompt = buildPrompt({ mode, diffInline, diffFile, files: ctx.files ?? [], head: ctx.head, skipped: ctx.skipped });
+  const run = runClaude({ bin, prompt, input: diffInline ? diff : undefined, opts, cwd: ctx.dir ?? ctx.top ?? cwd, diffDir });
   if (diffDir) rmSync(diffDir, { recursive: true, force: true });
   if (run.error) {
     console.error(`security-audit: could not run ${bin}: ${run.error.code === 'ETIMEDOUT' ? `timed out after ${opts.timeout}s` : run.error.message}`);
@@ -287,6 +359,7 @@ function main() {
     console.error(`security-audit: no usable result (exit ${run.status}): ${e.message}\n${tail}`);
     return 2;
   }
+  if (ctx.skipped?.length) return report(result, opts); // an incomplete snapshot: run again next time
   try {
     mkdirSync(cacheDir, { recursive: true });
     writeFileSync(join(cacheDir, '.gitignore'), '*\n');

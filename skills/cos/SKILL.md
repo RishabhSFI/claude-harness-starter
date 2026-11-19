@@ -219,16 +219,16 @@ owner's go-ahead is per public action.
 A worker's note is its claim, not proof. Before telling the owner anything
 is done (code, doc, artifact, plan, email):
 
-1. Run `node H/cos.mjs pr-check <owner/repo#N>`: required checks COMPLETED
-   and successful, the scope check, the named reviewer and "Security audit"
-   line, the "Asked vs delivered" section, and (flag only) phone screenshots
-   for UI changes. With no PR, save the report to a scratchpad file and run
-   `node H/scope-check.mjs --file <it>`. For a code PR, send a subagent the
-   PR, its section and the owner's exact words; it returns pass/fail and what
-   the diff holds beyond the section, in a few lines. Don't load the diff
-   here. For a doc, artifact or plan, open the deliverable
-   itself (the Artifact tool's read for an artifact), never only the worker's
-   summary.
+1. Run `node H/cos.mjs pr-check <owner/repo#N>`: checks COMPLETED and
+   green, the scope check, a named reviewer (Opus if risky), "Security
+   audit", no open owner questions on a public base, and (flag only) phone
+   shots. `walls.mjs` blocks merges until it passes. With no PR, save the
+   report to a scratchpad file and run `node H/scope-check.mjs --file <it>`.
+   For a code PR, a subagent gets the PR, its section and the owner's words
+   and returns pass/fail and what the diff holds beyond the section. Don't
+   load the diff here. For a doc, artifact or plan, open the deliverable
+   itself (the Artifact tool's read for an artifact), never only the
+   worker's summary.
 2. Read the "Asked vs delivered" section (`pr-check` prints it) against the owner's words in this
    chat, not the brief's summary. Reject the work if the check fails, the
    section is missing, a delivered item answers nothing the owner said, or the
