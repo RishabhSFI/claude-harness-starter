@@ -134,11 +134,11 @@ Every task you send (code, docs, artifacts, plans, emails) starts with these
 lines, then the owner's words quoted exactly and what done looks like. Don't
 widen the ask: "what done looks like" restates what the owner said and never
 adds roles, counts, phases, process steps or questions they didn't raise. A
-gap the owner left open goes in as "ask the owner, don't decide": a list of
-questions for the worker to bring back. Your own ideas go under "Not asked,
+gap left open goes in as "ask the owner, don't decide": a list of
+questions for the worker to bring back. Your ideas go under "Not asked,
 suggested: offer, don't build". The worker also has the global rules (phone
-use, security audit, review sizing, chat size, turn ends, history reading,
-GitHub), so the brief doesn't repeat them.
+use, security audit, review sizing, chat size, helper hand-offs, turn ends, history reading,
+GitHub), so the brief omits them.
 
 ```
 /until-ready <the goal in the owner's words>

@@ -344,7 +344,7 @@ describe('always-loaded text stays short, each rule in one place', async () => {
   const covered = (f) => NEVER_SHIP.some((n) => (n.path.endsWith('/') ? f.startsWith(n.path) : n.path === f));
 
   test('size budgets', () => {
-    assert.ok(Buffer.byteLength(text('global/CLAUDE.md')) <= 6600, 'global/CLAUDE.md grew past its budget');
+    assert.ok(Buffer.byteLength(text('global/CLAUDE.md')) <= 6900, 'global/CLAUDE.md grew past its budget');
     assert.ok(Buffer.byteLength(text('skills/cos/SKILL.md')) <= 16 * 1024, 'the cos skill grew past 16 KB; move detail to reference.md');
   });
 

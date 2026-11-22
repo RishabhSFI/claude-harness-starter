@@ -36,6 +36,10 @@ to these.
     project's wiki page or the notes folder, then keep working in the same chat;
     the app compacts it. Never end a turn or stop work because of the warning.
     The Chief of Staff hub has its own, stricter rules in the cos skill.
+    Helpers (subagents) differ: nothing warns them, so at about 60k tokens of
+    their own growth a helper writes findings and what is left to a hand-off
+    file (notes folder or wiki page) and returns its path with a three-line
+    summary. Read-only helpers return the summary inline.
   - Keep the main chat small: hand building, big outputs to
     subagents, long reads to `reader` (Haiku: searches, logs; diffs and PR
     reviews stay on Sonnet/Opus); summarize what comes back.
