@@ -13,6 +13,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkLedger, section } from './scope-check.mjs';
+import { DEFAULT_APPROVAL, RISKY_LINES, resolveApproval, reviewClean, reviewOfHead, riskOf, tierOf } from './pr-policy.mjs';
+
+export { RISKY_LINES, riskOf };
 
 const SELF_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -111,29 +114,15 @@ const REVIEWER_LINE = /\b(?:independent\s+)?review(?:ers?|ed by)?\b[^\n]*\b(?:op
 /** True for a body line that names a code reviewer: not a negation, and not only the scope review. */
 const namesReviewer = (l) => !NOT_A_REVIEW.test(l) && REVIEWER_LINE.test(l.replace(SCOPE_PHRASE, ''));
 
-// global/CLAUDE.md "Size reviews": Opus for large or risky diffs (about 150 lines, or auth, money, data deletion or merge logic).
-export const RISKY_LINES = 150;
-const RISKY_PATH = /auth|login|passw|secret|session|jwt|cookie|middleware|crypto|\.env|\brls\b|polic|permission|payment|billing|stripe|invoice|payout|refund|accounting|money|wallet|delete|purge|migration|\.sql$|merge/i;
-
-/** Why a PR needs an Opus review, or null when a Sonnet review is enough. */
-export function riskOf(pr, files) {
-  const size = (Number(pr?.additions) || 0) + (Number(pr?.deletions) || 0);
-  const paths = files.filter((f) => RISKY_PATH.test(f));
-  const why = [];
-  if (size >= RISKY_LINES) why.push(`${size} changed lines`);
-  if (paths.length) why.push(`risky paths: ${paths.slice(0, 3).join(', ')}${paths.length > 3 ? ` (+${paths.length - 3})` : ''}`);
-  return why.length ? why.join('; ') : null;
-}
-
 /** A passing check is an actual SUCCESS, not NEUTRAL or SKIPPED (those don't fail, but all-skipped proves nothing). */
 const succeeded = (c) => String(c?.conclusion ?? c?.state ?? '').toUpperCase() === 'SUCCESS';
 
 /**
  * @param {{body?: string, files?: ({path?: string} | string)[], statusCheckRollup?: object[]}} pr as `gh pr view --json body,files,statusCheckRollup` returns it
- * @param {{allowNoChecks?: boolean, publicBase?: boolean | null}} [opts] publicBase: false only when projects.json says the base branch is not public
+ * @param {{allowNoChecks?: boolean, publicBase?: boolean | null, approval?: object, trusted?: string[], harnessRepo?: boolean}} [opts] publicBase: false only when projects.json says the base branch is not public; approval: the project's policy; trusted: logins whose harness-review comments count; harnessRepo: the PR is in the harness's own repo
  * @returns {{ok: boolean, lines: {name: string, status: 'pass' | 'FAIL' | 'FLAG' | 'n/a', note: string}[]}}
  */
-export function evaluatePr(pr, { allowNoChecks = false, publicBase = null } = {}) {
+export function evaluatePr(pr, { allowNoChecks = false, publicBase = null, approval = DEFAULT_APPROVAL, trusted = [], harnessRepo = false } = {}) {
   const body = typeof pr?.body === 'string' ? pr.body : '';
   const lines = [];
   const add = (name, status, note) => lines.push({ name, status, note });
@@ -157,8 +146,13 @@ export function evaluatePr(pr, { allowNoChecks = false, publicBase = null } = {}
   add('asked-vs-delivered', noSection ? 'FAIL' : 'pass', noSection ? 'section missing' : 'section present');
   add('scope-check', ledger.ok ? 'pass' : 'FAIL', ledger.ok ? 'passes' : ledger.problems.filter((p) => !/No "## Asked vs delivered" section/.test(p))[0] ?? 'section missing');
 
+  const head = typeof pr?.headRefOid === 'string' ? pr.headRefOid : '';
+  const review = reviewOfHead(pr?.comments, head, trusted, pr?.baseRefName ?? '');
+  const clean = reviewClean(review);
+  // A clean harness review of this exact commit counts as the independent reviewer, with the model it names.
   const reviewLines = body.split('\n').filter(namesReviewer);
-  add('reviewer', reviewLines.length ? 'pass' : 'FAIL', reviewLines.length ? 'a review line (other than the scope verdict) names who or which model' : 'body names no independent reviewer and model; run one on the final diff and add "Independent review: <reviewer>, <model>"');
+  if (clean) reviewLines.push(`Independent review: ${review.reviewer} (harness review of ${head.slice(0, 7)})`);
+  add('reviewer', reviewLines.length ? 'pass' : 'FAIL', clean ? `harness review of ${head.slice(0, 7)} by ${review.reviewer}` : reviewLines.length ? 'a review line (other than the scope verdict) names who or which model' : 'body names no independent reviewer and model; run one on the final diff and add "Independent review: <reviewer>, <model>"');
 
   const files = (pr?.files ?? []).map((f) => (typeof f === 'string' ? f : f?.path ?? '')).filter(Boolean);
   const risk = riskOf(pr, files);
@@ -181,7 +175,27 @@ export function evaluatePr(pr, { allowNoChecks = false, publicBase = null } = {}
     const both = /\b375\b/.test(body) && /\b390\b/.test(body) && /screenshot|screen shot|\bshots?\b/i.test(body);
     add('phone-shots', both ? 'pass' : 'FLAG', both ? '375 and 390 screenshots mentioned' : `${ui.length} UI file(s) changed but the body doesn't mention 375 and 390 screenshots`);
   }
-  return { ok: lines.every((l) => l.status !== 'FAIL'), lines };
+
+  // Approval tier and auto-merge: tier and auto-merge only inform; review-of-latest FAILs when the head's signed review has findings (push a new commit to clear it).
+  const tier = tierOf(pr, files, approval);
+  add('tier', 'n/a', `${tier.tier} (${tier.why})`);
+  add('review-of-latest', clean ? 'pass' : review ? 'FAIL' : 'FLAG', clean ? `commit ${head.slice(0, 7)} reviewed clean (code + scope) by ${review.reviewer}` : review ? `commit ${head.slice(0, 7)} reviewed with findings or a scope failure` : head ? `no harness review of commit ${head.slice(0, 7)} yet` : 'head commit unknown');
+  const ok = lines.every((l) => l.status !== 'FAIL');
+  const no = [];
+  if (!ok) no.push('a pr-check step fails');
+  if (publicBase !== false) no.push(publicBase ? 'base branch is public' : 'base branch is not declared private in projects.json');
+  if (!approval.autoMerge) no.push('auto-merge is off for this project');
+  if (harnessRepo) no.push("the harness's own repo is always the owner's call");
+  if (tier.tier !== 'routine') no.push(`tier is needs-you: ${tier.why}`);
+  if (!clean) no.push('latest commit has no clean review');
+  if (!trusted.some((t) => String(t).toLowerCase() === String(pr?.author?.login ?? '').toLowerCase())) no.push('PR author is not the owner');
+  if (pr?.isDraft) no.push('draft');
+  if (pr?.mergeable !== 'MERGEABLE') no.push(`mergeable is ${String(pr?.mergeable ?? 'unknown').toLowerCase()}`);
+  if (lines.find((l) => l.name === 'owner-questions')?.status !== 'pass') no.push('open owner questions');
+  if (!/^[0-9a-f]{40}$/i.test(head)) no.push('head commit unknown');
+  const eligible = no.length === 0;
+  add('auto-merge', eligible ? 'pass' : 'n/a', eligible ? `ELIGIBLE head=${head.toLowerCase()} (private base, routine, clean review of this commit)` : `needs the owner: ${no.join('; ')}`);
+  return { ok, eligible, tier: tier.tier, head, lines };
 }
 
 export const ASKED_CAP = 60;
@@ -202,8 +216,8 @@ export function askedExcerpt(body, cap = ASKED_CAP) {
 }
 
 export function renderPrCheck(label, { ok, lines }, body = '') {
-  const head = `pr-check ${label}: ${ok ? 'PASS' : 'FAIL'} (a check only: merging stays the hub's act after the owner's yes)`;
-  return [head, ...lines.map((l) => `${l.name}: ${l.status}${l.note ? ` - ${l.note}` : ''}`), ...askedExcerpt(body)].join('\n');
+  const head = `pr-check ${label}: ${ok ? 'PASS' : 'FAIL'} (a check only: merging stays the hub's act after the owner's yes; the one exception is an "auto-merge: pass" line)`;
+  return [head, ...lines.map((l) => `${l.name}: ${l.status}${l.note ? ` - ${String(l.note).replace(/[\u0000-\u001f\u2028\u2029]+/g, ' ')}` : ''}`), ...askedExcerpt(body)].join('\n');
 }
 
 /** `owner/repo` from a git remote URL, or null. */
@@ -223,9 +237,19 @@ export function parsePrRef(ref, repoFlag) {
 
 /** The default fetcher: `gh pr view`, with -R always passed. Tests pass their own. */
 export function ghFetchPr({ repo, number }, gh = process.env.GH_BIN || 'gh') {
-  const r = spawnSync(gh, ['pr', 'view', String(number), '-R', repo, '--json', 'body,files,statusCheckRollup,state,baseRefName,additions,deletions'], { encoding: 'utf8', timeout: 20_000 });
+  const r = spawnSync(gh, ['pr', 'view', String(number), '-R', repo, '--json', 'body,files,statusCheckRollup,state,baseRefName,additions,deletions,headRefOid,comments,mergeable,isDraft,title,url,number,changedFiles,author'], { encoding: 'utf8', timeout: 20_000 });
   if (r.status !== 0) throw new Error(`gh pr view failed: ${(r.stderr || r.error?.message || '').split('\n')[0]}`);
-  return JSON.parse(r.stdout);
+  const pr = JSON.parse(r.stdout);
+  // `gh pr view` lists at most 100 files and only a renamed file's new path; the REST list has every file and previous_filename.
+  const api = spawnSync(gh, ['api', '--paginate', `repos/${repo}/pulls/${number}/files`, '--jq', '.[] | [.filename, .previous_filename // ""] | @tsv'], { encoding: 'utf8', timeout: 30_000 });
+  const out = api.stdout ?? '';
+  const isJson = (() => { try { return typeof JSON.parse(out) === 'object'; } catch { return false; } })();
+  if (api.status !== 0 || api.error) pr.changedFiles = (pr.files?.length ?? 0) + 1; // can't list every file: needs-you, but risk checks keep the files gh pr view gave
+  else if (!isJson) {
+    const rows = out.split('\n').filter(Boolean);
+    if (rows.length) pr.files = [...new Set(rows.flatMap((l) => l.split('\t')).map((x) => x.trim()).filter(Boolean))].map((path) => ({ path }));
+  }
+  return pr;
 }
 
 /**
@@ -242,7 +266,30 @@ export function publicBaseOf(repo, base, registryFile = join(SELF_DIR, 'projects
   const want = String(repo ?? '').toLowerCase();
   const p = projects.find((x) => (x.repos ?? []).some((r) => String(r).toLowerCase() === want));
   if (!p || !p.public || !Array.isArray(p.public.branches)) return null;
+  // A project that publishes through a remote (a live-site push) has no private branch we can tell apart: treat it as public.
+  if (Array.isArray(p.public.remotes) && p.public.remotes.length) return true;
   return p.public.branches.includes(base);
+}
+
+/** The approval policy, trusted comment authors and harness-repo flag for `repo`. A malformed policy throws, so pr-check fails closed. */
+export function policyFor(repo, registryFile = join(SELF_DIR, 'projects.json'), harnessOrigin = harnessRepo()) {
+  const want = String(repo ?? '').toLowerCase();
+  let projects = [];
+  try {
+    projects = JSON.parse(readFileSync(registryFile, 'utf8')).projects ?? [];
+  } catch {}
+  const p = projects.find((x) => (x.repos ?? []).some((r) => String(r).toLowerCase() === want));
+  return {
+    approval: resolveApproval(p?.approval),
+    trusted: want.includes('/') ? [want.split('/')[0]] : [],
+    harnessRepo: !!harnessOrigin && harnessOrigin.toLowerCase() === want,
+  };
+}
+
+/** owner/repo of the harness's own origin. */
+function harnessRepo() {
+  const r = spawnSync('git', ['-C', SELF_DIR, 'remote', 'get-url', 'origin'], { encoding: 'utf8' });
+  return r.status === 0 ? repoFromRemote(r.stdout) : null;
 }
 
 function originRepo() {
@@ -260,7 +307,7 @@ export function runPrCheck(args, { fetchPr = ghFetchPr, out = console.log, err =
     if (!ref.repo && !flags.fixture) throw new Error('no repo: pass owner/repo#N or -R owner/repo');
     const pr = flags.fixture ? JSON.parse(readFileSync(flags.fixture, 'utf8')) : fetchPr(ref);
     const publicBase = ref.repo ? publicBaseOf(ref.repo, pr?.baseRefName, flags.registry) : null;
-    const result = evaluatePr(pr, { allowNoChecks: !!flags['allow-no-checks'], publicBase });
+    const result = evaluatePr(pr, { allowNoChecks: !!flags['allow-no-checks'], publicBase, ...policyFor(ref.repo, flags.registry) });
     out(renderPrCheck(`${ref.repo ?? 'fixture'}#${ref.number}`, result, pr?.body));
     return result.ok ? 0 : 1;
   } catch (e) {

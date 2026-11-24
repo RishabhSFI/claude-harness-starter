@@ -9,6 +9,7 @@ import { USER_FILES } from './starter-update.mjs';
 import { uptimeWarningOn } from './uptime.mjs';
 import { scopeStatus } from './scope-check.mjs';
 import { runTool } from './cos-tools.mjs';
+import { runAutoMerge, runMarker, runSweep } from './pr-sweep.mjs';
 import { sizeWarning } from './size-guard.mjs';
 import { baseRefOf, hasOpenWork, inspectWorktree, linkedWorktrees, removeWorktree, staleReason } from './worktrees.mjs';
 import { attachSecretsToStatus, parseSecrets, resolveSecrets, renderSecrets, secretsJson, writeSecretsPage } from './secrets.mjs';
@@ -546,7 +547,7 @@ const secretsCacheFor = (registryFile) => join(dirname(resolve(registryFile)), '
 const NO_PROJECTS = 'No projects yet. Register a folder with `node cos.mjs add <folder>`, or start one with `node cos.mjs new <slug> --what "..."`.';
 
 /** Installed scheduled task -> its prompt in this repo's scheduled/ folder. */
-const SCHEDULED_PROMPTS = { 'resume-paused-sessions': 'resume-paused.md', 'cos-morning-brief': 'morning-brief.md', 'daily-harness-review': 'daily-review.md' };
+const SCHEDULED_PROMPTS = { 'resume-paused-sessions': 'resume-paused.md', 'cos-morning-brief': 'morning-brief.md', 'daily-harness-review': 'daily-review.md', 'pr-steward': 'pr-steward.md' };
 
 const normalizePrompt = (text) => text.replaceAll(homedir(), '~').trim();
 
@@ -1111,6 +1112,10 @@ function cmdHook(projects, flags) {
 
 function main() {
   const [command, ...rest] = process.argv.slice(2);
+  if (command === 'pr-sweep' || command === 'pr-marker' || command === 'pr-automerge') {
+    process.exitCode = command === 'pr-sweep' ? runSweep(rest) : command === 'pr-marker' ? runMarker(rest) : runAutoMerge(rest);
+    return;
+  }
   const toolCode = runTool(command, rest);
   if (toolCode !== null) {
     process.exitCode = toolCode;
@@ -1181,7 +1186,7 @@ function main() {
 
   const commands = { status: cmdStatus, worktrees: cmdWorktrees, route: cmdRoute, secrets: cmdSecrets, paused: cmdPaused, ff: cmdFf };
   if (!commands[command]) {
-    console.error('usage: cos.mjs status [--json] [--no-gh] [--cached-secrets] [--full] | worktrees [--json] [--remove] | usage [--hours 48] [--growth 80000 | --cap <tokens>] [--projects-dir <dir>] [--reads] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | retire <id> | route "<text>" [--json] | ff <folder> <sync-branch> <target-branch> [--json] | pr-check <owner/repo#N | N> [-R repo] | stop-rule --all <pct> --fable <pct> [--five-hour <pct>] [--now <ISO time>] [--workers N] | rate --start-all A --start-fable B --now-all C --now-fable D --worker-hours H | cap --working N [--want W] | worker-model <role> | learned | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run] | publish-codex-starter [--to <url>] [--dry-run]   (--registry <path>)');
+    console.error('usage: cos.mjs status [--json] [--no-gh] [--cached-secrets] [--full] | worktrees [--json] [--remove] | usage [--hours 48] [--growth 80000 | --cap <tokens>] [--projects-dir <dir>] [--reads] | new <slug> --what "..." | add <folder> | secrets [--json | --write-page] | retire <id> | route "<text>" [--json] | ff <folder> <sync-branch> <target-branch> [--json] | pr-check <owner/repo#N | N> [-R repo] | pr-sweep [--json] [--project <id>] | pr-marker review|steward ... | pr-automerge <owner/repo#N> [--dry-run] | stop-rule --all <pct> --fable <pct> [--five-hour <pct>] [--now <ISO time>] [--workers N] | rate --start-all A --start-fable B --now-all C --now-fable D --worker-hours H | cap --working N [--want W] | worker-model <role> | learned | paused [--json] [--due] [--mark <sessionId> [--paused-at <iso>]] | hook | init | update [--check] [--adopt] [--from <url>] | publish-starter [--to <url>] [--dry-run] | publish-codex-starter [--to <url>] [--dry-run]   (--registry <path>)');
     process.exitCode = 2;
     return;
   }

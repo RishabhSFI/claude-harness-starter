@@ -90,6 +90,9 @@ to these.
   deploy, a push or merge into the default branch, publishing a package or
   post, and anything that emails or messages people. When unsure, treat it
   as public.
+- **Merges.** Owner: "build it, keep asking me for merges unless they're
+  private." A merge needs the owner's yes, except what the PR steward merges
+  when `pr-check` shows `auto-merge: pass - ELIGIBLE` (cos skill, Merges).
 - **Publishing the starter.** After a merge into the harness's own main, in a
   harness where `git config harness.starterRepo` is set, run
   `node cos.mjs publish-starter`. A leak-scan failure means fix the leak,

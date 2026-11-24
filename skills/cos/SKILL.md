@@ -188,8 +188,8 @@ say. Hub actions:
 
 - **Go ahead**: push task branches, Vercel preview deploys (behind the
   owner's login), tests and local servers.
-- **Merges need the owner's yes, always.** Auto mode blocks the hub from
-  merging, even into private branches (see Merges).
+- **Merges need the owner's yes**, except the steward's auto-merge. Auto mode
+  blocks the hub from merging, even into private branches (see Merges).
 - **Owner reviews first**: merging or pushing into a public branch, pushing
   to a public remote, `vercel deploy --prod`, live database migrations, and
   anything that emails or messages people. Put it under "Ready for your
@@ -201,17 +201,21 @@ say. Hub actions:
 
 ### Merges
 
-Don't ask about routine PRs one at a time. Gather every ready PR into a
-private base (status lists them under "Chief of Staff can merge"), run
-`node H/cos.mjs pr-check <owner/repo#N>` on each, and drop any that fails.
-Ask once with `AskUserQuestion`: "Ready to merge", each PR on its own line
-(link, one line on what it does, the reviewer's verdict), buttons "Merge all"
-and "Pick some". On a yes, merge each with `gh pr merge <n> -R <origin repo>
---squash --delete-branch`, then report them done. `pr-check` only checks;
-merging stays your act after the owner's yes.
+The owner: "build it, keep asking me for merges unless they're private."
+Only the PR steward (`scheduled/pr-steward.md`) merges without a yes, and only when
+`pr-check` shows `auto-merge: pass - ELIGIBLE` (reference.md, "PR steward").
 
-A go-live PR (into a public branch, under "Ready for your review") never goes
-in that batch. Each gets its own question with its preview link, because the
+Don't ask about routine PRs one at a time. Gather every ready PR into a private
+base (`node H/cos.mjs pr-sweep` lists them as `owner`, status lists them under
+"Chief of Staff can merge"; `flag` rows ran out of steward tries), run `node H/cos.mjs pr-check <owner/repo#N>` on each, and drop
+any that fails. Ask once with `AskUserQuestion`: "Ready to merge", each PR on
+its own line (link, one line on what it does, the reviewer's verdict),
+buttons "Merge all" and "Pick some". On a yes, merge each with `gh pr merge
+<n> -R <origin repo> --squash --delete-branch`, then report them done. `pr-check` only checks;
+merging stays your act after the owner's yes (the steward's auto-merge aside).
+
+A go-live PR (into a public branch, under "Ready for your review") never goes in
+that batch. Each gets its own question with its preview link, because the
 owner's go-ahead is per public action.
 
 ## When a session reports back

@@ -221,7 +221,7 @@ export const realDeps = {
   config: (cwd, key) => git(cwd, ['config', '--get', key]),
   branch: (cwd) => git(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
   prCheck: (ref) => {
-    const r = spawnSync(process.execPath, [join(HARNESS, 'cos.mjs'), 'pr-check', ref], { encoding: 'utf8', timeout: 30_000 });
+    const r = spawnSync(process.execPath, [join(HARNESS, 'cos.mjs'), 'pr-check', ref], { encoding: 'utf8', timeout: 60_000 });
     return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}`, error: r.error?.message };
   },
 };
@@ -328,11 +328,11 @@ function checkGh(all, env, cwd, deps) {
   if (other) return `\`${cmd}\` targets ${other}, but this folder's origin is ${origin}. Act only on your own repo: pass -R ${origin}, or cd into that repo's folder first.`;
   if (url && url[1].toLowerCase() !== origin) return `\`${cmd}\` names a PR in ${url[1]}, but this folder's origin is ${origin}.`;
 
-  if (group === 'pr' && sub === 'merge') return checkMerge(rest, origin, url, deps);
+  if (group === 'pr' && sub === 'merge') return checkMerge(rest, origin, url, deps, env);
   return null;
 }
 
-function checkMerge(rest, origin, url, deps) {
+function checkMerge(rest, origin, url, deps, env = {}) {
   let number = url ? url[2] : null;
   for (let j = 0; j < rest.length && !number; j++) {
     const a = rest[j];
@@ -344,12 +344,38 @@ function checkMerge(rest, origin, url, deps) {
   const ref = `${origin}#${number}`;
   const r = deps.prCheck(ref);
   const out = (r.out ?? '').split('\n');
+  if (env.HARNESS_AUTOMERGE === '1') return checkAutoMerge(rest, ref, r, out);
   if (r.code === 0 && /^pr-check \S+: PASS\b/.test(out[0] ?? '')) return null;
   // Only lines before the fenced PR text are check output; the PR body itself is untrusted.
   const fence = out.findIndex((l) => l.startsWith('--- BEGIN'));
   const failing = out.slice(1, fence < 0 ? undefined : fence).filter((l) => /^[\w-]+: FAIL\b/.test(l));
   const why = failing.length ? failing.join('; ') : r.error ? `pr-check did not finish (${r.error})` : out.join(' ').trim().slice(0, 300) || `pr-check exited ${r.code}`;
   return `\`gh pr merge\` blocked: ${ref} is not ready. pr-check says ${why}. Fix each FAIL line as it says, then run \`node ${join(HARNESS, 'cos.mjs')} pr-check ${ref}\` and merge once it shows PASS.`;
+}
+
+/**
+ * The PR steward's own merge (`HARNESS_AUTOMERGE=1 gh pr merge N -R repo --squash --delete-branch --match-head-commit <sha>`).
+ * Allowed only when pr-check says "auto-merge: pass - ELIGIBLE head=<sha>" (routine tier, private base, clean review of that
+ * commit, every step passing) and the command is exactly that shape with the same sha. Anything else is denied.
+ * A merge without HARNESS_AUTOMERGE is the hub's, after the owner's yes, and is checked as before.
+ */
+function checkAutoMerge(rest, ref, r, out) {
+  const deny = (why) => `auto-merge of ${ref} blocked: ${why}. Only a routine PR into a private branch with a clean review of its latest commit may merge without the owner's yes; list this one for the owner instead.`;
+  const flags = [];
+  let match = null;
+  for (let j = 0; j < rest.length; j++) {
+    const a = rest[j];
+    if (/^#?\d+$/.test(a)) continue;
+    if (a === '--match-head-commit') match = rest[++j] ?? '';
+    else if (a.startsWith('--match-head-commit=')) match = a.slice(20);
+    else flags.push(a);
+  }
+  if (flags.length !== 2 || !flags.includes('--squash') || !flags.includes('--delete-branch')) return deny('the flags must be exactly --squash --delete-branch --match-head-commit <sha>');
+  const fence = out.findIndex((l) => l.startsWith('--- BEGIN'));
+  const head = out.slice(1, fence < 0 ? undefined : fence).map((l) => l.match(/^auto-merge: pass - ELIGIBLE head=([0-9a-f]{40})\b/)).find(Boolean);
+  if (r.code !== 0 || !head) return deny(r.error ? `pr-check did not finish (${r.error})` : 'pr-check does not show "auto-merge: pass - ELIGIBLE"');
+  if (match?.toLowerCase() !== head[1]) return deny('--match-head-commit must be the exact commit pr-check reviewed');
+  return null;
 }
 
 // ---- the whole command ----
@@ -360,6 +386,7 @@ function checkMerge(rest, origin, url, deps) {
  * @returns {string | null} why it is blocked, or null to let it run
  */
 export function decide(command, cwd, deps = realDeps, depth = 0) {
+  if (/harness-steward\.key/.test(command) && !/\bcos\.mjs['"]?\s+pr-marker\b/.test(command)) return "the PR steward's signing key (harness-steward.key) is read only by `cos.mjs pr-marker`; a review can't be signed by hand.";
   if (!/\b(git|gh)\b/.test(command)) return null;
   let dir = cwd;
   const saved = [];

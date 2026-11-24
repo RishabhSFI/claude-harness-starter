@@ -142,3 +142,37 @@ file is gitignored) holds optional settings. Absent means today's behaviour.
   read by `node H/cos.mjs worker-model <role>`.
 - `stopAllModels` 85, `stopFable` 90, `hardStop` 95, `softStopBefore` (compared with `stop-rule --now <ISO time>`, default the current time), and
   `targetLow`/`targetHigh` 90/97, read by `stop-rule` and `rate`.
+
+## PR steward
+
+Owner's words: "build it, keep asking me for merges unless they're private."
+`scheduled/pr-steward.md` is the prompt of the scheduled task `pr-steward` (every 2 hours, weekdays, as the owner chose).
+Each run: `cos.mjs pr-sweep` plans every open PR of every project; the task
+reviews each new commit once (Sonnet for small safe diffs, Opus otherwise,
+plus the scope review), fixes failing checks, merge conflicts and review
+findings on the PR's own branch (3 tries, then `flag`, which it messages to the hub chat at once), and merges only an
+eligible PR. Review and try markers are the first line of PR comments by the
+repo owner's login (`cos.mjs pr-marker`, review markers signed with a per-install
+key in `~/.claude/harness-steward.key`, which walls.mjs keeps casual commands away from; any session on this Mac can still run pr-marker); a
+review counts for its own commit, and with no key nothing auto-merges.
+
+`pr-check` prints `tier` and `auto-merge`. Eligible means: tier routine (docs
+only, or under 150 changed lines with no auth, money, migration/DB, secrets,
+deletion, merge-logic, CI or deploy path); base branch listed as not public in
+`projects.json` (undeclared counts as public); every pr-check step passing;
+clean code and scope review of the latest commit; mergeable, not a draft, no
+open owner questions; not the harness's own repo. A project may tighten this
+with `approval` in `projects.json` (`autoMerge`, `routineMaxLines` up to 150,
+`riskyPaths` regexes). The steward merges only through `cos.mjs pr-automerge <owner/repo#N>`, which
+re-checks and pins the merge to the reviewed head. `walls.mjs` also allows a
+Bash `HARNESS_AUTOMERGE=1 gh pr merge <n> -R <origin> --squash --delete-branch
+--match-head-commit <sha>` only when pr-check shows eligible for that sha; a
+plain `gh pr merge` (the hub's, after the owner's yes) is not stopped by
+walls beyond pr-check PASS, so the steward prompt forbids it.
+Every other merge is the hub's, after the owner's yes.
+
+## Questions about the past
+
+"What did we decide about X", "who is Y", "what does Z mean": if the wiki
+doesn't know, look in chats or the project, then add what you found to the
+wiki.
