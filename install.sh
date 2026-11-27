@@ -1,5 +1,5 @@
 #!/bin/sh
-# Links the cos, wiki, until-ready, security-audit and scope-review skills, the history-reader and reader agents and global CLAUDE.md into ~/.claude and
+# Links the cos, wiki, until-ready, security-audit, scope-review and roblox-economist skills, the history-reader, reader, cfo-reviewer and pass-reviewer agents and global CLAUDE.md into ~/.claude and
 # registers the hooks: the wrong-folder and chat-size warning (UserPromptSubmit), the
 # until-ready gate (Stop) and the push/gh/merge walls (PreToolUse on Bash), and sets CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000 in settings.json env when unset. Safe to rerun. Pass --dry-run to only print actions.
 set -eu
@@ -57,6 +57,7 @@ link "$HARNESS/skills/wiki" "$CLAUDE_DIR/skills/wiki" refuse
 link "$HARNESS/skills/until-ready" "$CLAUDE_DIR/skills/until-ready" refuse
 link "$HARNESS/skills/security-audit" "$CLAUDE_DIR/skills/security-audit" refuse
 link "$HARNESS/skills/scope-review" "$CLAUDE_DIR/skills/scope-review" refuse
+link "$HARNESS/skills/roblox-economist" "$CLAUDE_DIR/skills/roblox-economist" refuse
 # Vendored emilkowalski/skills (MIT): one link per skill folder.
 for d in "$HARNESS"/skills/vendor/emilkowalski/*/; do
   [ -f "${d}SKILL.md" ] || continue
@@ -65,6 +66,8 @@ for d in "$HARNESS"/skills/vendor/emilkowalski/*/; do
 done
 link "$HARNESS/agents/history-reader.md" "$CLAUDE_DIR/agents/history-reader.md" refuse
 link "$HARNESS/agents/reader.md" "$CLAUDE_DIR/agents/reader.md" refuse
+link "$HARNESS/agents/cfo-reviewer.md" "$CLAUDE_DIR/agents/cfo-reviewer.md" refuse
+link "$HARNESS/agents/pass-reviewer.md" "$CLAUDE_DIR/agents/pass-reviewer.md" refuse
 link "$HARNESS/global/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" warn
 link "$HARNESS/global/pstack-models.md" "$CLAUDE_DIR/pstack-models.md" warn
 

@@ -181,6 +181,11 @@ Fill in `<H>/wiki/projects/<id>.md` with the real path (`node H/wiki.mjs page
 <id>`). More brief extras (harness starter publish, no-`/until-ready`
 questions) are in reference.md.
 
+A Roblox task that touches prices, coins, the store, game passes or
+developer products adds to the brief: "Price with the roblox-economist
+skill. Before the PR, run the cfo-reviewer and pass-reviewer agents and
+fix what they find until both pass; the PR body quotes both verdicts."
+
 ## Releases
 
 Public means what the global Releases rule and the project's `public` field
